@@ -5,15 +5,14 @@
 #include "Map/RGMapSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Components/StaticMeshComponent.h"
-#include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
 #include "CesiumGeoreference.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
 {
-    PrimaryActorTick.bCanEverTick = false;  // No per-frame work needed
+    // Ticking disabled — no per-frame work needed
+    PrimaryActorTick.bCanEverTick = false;
 
-    // Root component — markers attach to this
     USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     SetRootComponent(Root);
 
@@ -32,23 +31,18 @@ void ARGCesiumMapManager::BeginPlay()
 {
     Super::BeginPlay();
 
-    // Auto-find CesiumGeoreference in the level if not set in editor
+    // Auto-find CesiumGeoreference via iterator (avoids GetActorOfClass type issues)
     if (!CesiumGeoreference)
     {
         for (TActorIterator<ACesiumGeoreference> It(GetWorld()); It; ++It)
         {
             CesiumGeoreference = *It;
+            UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found CesiumGeoreference automatically"));
             break;
         }
-
         if (!CesiumGeoreference)
         {
-            UE_LOG(LogMap, Warning,
-                TEXT("ARGCesiumMapManager: No CesiumGeoreference in level. Assign it in Details."));
-        }
-        else
-        {
-            UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found CesiumGeoreference automatically"));
+            UE_LOG(LogMap, Warning, TEXT("ARGCesiumMapManager: No CesiumGeoreference in level."));
         }
     }
 
@@ -59,13 +53,11 @@ void ARGCesiumMapManager::BeginPlay()
         {
             MapSub->OnGuessPlaced.AddDynamic(this, &ARGCesiumMapManager::OnGuessPlaced);
             MapSub->OnGuessResult.AddDynamic(this, &ARGCesiumMapManager::OnGuessResult);
-            UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager subscribed to MapSubsystem events"));
         }
     }
 }
 
-// ─── Coordinate conversion ─────────────────────────────────────────────────────
-// Uses Cesium for Unreal 2.x API (no glm types exposed to user code)
+// ─── Coordinate conversion ────────────────────────────────────────────────────
 
 FVector ARGCesiumMapManager::GeoToWorld(FRGGeoCoordinate Coordinate) const
 {
@@ -75,14 +67,13 @@ FVector ARGCesiumMapManager::GeoToWorld(FRGGeoCoordinate Coordinate) const
         return FVector::ZeroVector;
     }
 
-    // Cesium 2.x: TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, HeightM))
-    // Returns position in the Georeference's local (not world) space.
-    // We then convert to world space via the actor's transform.
-    const FVector LLH(Coordinate.Longitude, Coordinate.Latitude, MarkerHeightOffset / 100.0);
-    const FVector LocalPos = CesiumGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(LLH);
-
-    // The georeference local space IS Unreal world space when georeference is at world origin
-    return LocalPos;
+    // Cesium 2.x API: (Longitude, Latitude, HeightMetres)
+    const FVector LLH(
+        Coordinate.Longitude,
+        Coordinate.Latitude,
+        MarkerHeightOffset / 100.0f   // cm → m
+    );
+    return CesiumGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(LLH);
 }
 
 FRGGeoCoordinate ARGCesiumMapManager::WorldToGeo(FVector WorldPosition) const
@@ -93,12 +84,11 @@ FRGGeoCoordinate ARGCesiumMapManager::WorldToGeo(FVector WorldPosition) const
         return FRGGeoCoordinate{};
     }
 
-    // Cesium 2.x: TransformUnrealPositionToLongitudeLatitudeHeight(FVector WorldPos)
     const FVector LLH = CesiumGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(WorldPosition);
 
     FRGGeoCoordinate Coord;
-    Coord.Longitude = LLH.X;  // X = Longitude
-    Coord.Latitude  = LLH.Y;  // Y = Latitude
+    Coord.Longitude = LLH.X;   // X = Longitude (degrees)
+    Coord.Latitude  = LLH.Y;   // Y = Latitude  (degrees)
     return Coord;
 }
 
@@ -107,7 +97,7 @@ FRGGeoCoordinate ARGCesiumMapManager::WorldToGeo(FVector WorldPosition) const
 void ARGCesiumMapManager::HandleMapClick(FVector WorldHitPosition)
 {
     const FRGGeoCoordinate Coord = WorldToGeo(WorldHitPosition);
-    UE_LOG(LogMap, Log, TEXT("Map clicked: lat=%.4f lon=%.4f"), Coord.Latitude, Coord.Longitude);
+    UE_LOG(LogMap, Log, TEXT("Map click: lat=%.4f lon=%.4f"), Coord.Latitude, Coord.Longitude);
 
     if (UGameInstance* GI = GetGameInstance())
     {
@@ -116,7 +106,6 @@ void ARGCesiumMapManager::HandleMapClick(FVector WorldHitPosition)
             MapSub->PlaceGuess(Coord);
         }
     }
-
     OnMapClick.Broadcast(Coord, WorldHitPosition);
 }
 
@@ -127,14 +116,10 @@ void ARGCesiumMapManager::PlaceGuessMarker(FRGGeoCoordinate Coordinate)
     const FVector WorldPos = GeoToWorld(Coordinate);
     GuessMarkerMesh->SetWorldLocation(WorldPos);
 
-    // Orient the marker so it stands upright on the globe surface
     if (CesiumGeoreference)
     {
-        // TransformEastSouthUpRotatorToUnreal with identity gives us the "up" orientation at this point
         const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
-            FRotator::ZeroRotator,
-            WorldPos
-        );
+            FRotator::ZeroRotator, WorldPos);
         GuessMarkerMesh->SetWorldRotation(UpRot);
     }
 
@@ -147,22 +132,18 @@ void ARGCesiumMapManager::ShowRoundResult(FRGGeoCoordinate GuessCoord, FRGGeoCoo
 
     if (ActualLocationMarkerMesh)
     {
-        const FVector ActualWorldPos = GeoToWorld(ActualCoord);
-        ActualLocationMarkerMesh->SetWorldLocation(ActualWorldPos);
+        const FVector ActualPos = GeoToWorld(ActualCoord);
+        ActualLocationMarkerMesh->SetWorldLocation(ActualPos);
 
         if (CesiumGeoreference)
         {
             const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
-                FRotator::ZeroRotator,
-                ActualWorldPos
-            );
+                FRotator::ZeroRotator, ActualPos);
             ActualLocationMarkerMesh->SetWorldRotation(UpRot);
         }
 
         ActualLocationMarkerMesh->SetVisibility(true);
     }
-
-    UE_LOG(LogMap, Log, TEXT("Round result overlays shown"));
 }
 
 void ARGCesiumMapManager::ClearRoundOverlays()

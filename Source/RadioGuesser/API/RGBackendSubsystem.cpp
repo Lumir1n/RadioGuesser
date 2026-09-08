@@ -74,12 +74,12 @@ void URGBackendSubsystem::SendRequest(const FString& Verb,
     Request->OnProcessRequestComplete().BindLambda(
         [Callback](FHttpRequestPtr /*Req*/, FHttpResponsePtr Resp, bool bConnected)
         {
-            const bool bSuccess = bConnected && Resp.IsValid() && Resp->GetResponseCode() < 400;
+            // IsBound() checks the object pointer for BindUObject delegates
+            if (!Callback.IsBound()) return;
+
+            const bool    bSuccess     = bConnected && Resp.IsValid() && Resp->GetResponseCode() < 400;
             const FString ResponseBody = Resp.IsValid() ? Resp->GetContentAsString() : FString();
-            if (Callback.IsBound())
-            {
-                Callback.Execute(bSuccess, ResponseBody);
-            }
+            Callback.ExecuteIfBound(bSuccess, ResponseBody);
         });
 
     Request->ProcessRequest();

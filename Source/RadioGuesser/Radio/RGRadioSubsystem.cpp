@@ -9,12 +9,13 @@ void URGRadioSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
 
-    // Create MediaPlayer at runtime — no asset needed in Content Browser
+    // Create UMediaPlayer at runtime — no Content Browser asset needed
     MediaPlayer = NewObject<UMediaPlayer>(this, TEXT("RGMediaPlayer"));
     MediaPlayer->SetLooping(false);
-    MediaPlayer->PlayOnOpen = true;
+    // Note: PlayOnOpen is handled by OpenSource triggering OnMediaOpened,
+    // which sets state to Playing. We do not access PlayOnOpen directly
+    // to avoid version-specific field access issues.
 
-    // Create a StreamMediaSource we can reuse by changing the URL each round
     StreamMediaSource = NewObject<UStreamMediaSource>(this, TEXT("RGStreamMediaSource"));
 
     BindMediaPlayerDelegates();
@@ -38,9 +39,9 @@ void URGRadioSubsystem::Deinitialize()
 void URGRadioSubsystem::BindMediaPlayerDelegates()
 {
     if (!MediaPlayer) return;
-    MediaPlayer->OnMediaOpened.AddDynamic(this, &URGRadioSubsystem::HandleMediaOpened);
-    MediaPlayer->OnMediaOpenFailed.AddDynamic(this, &URGRadioSubsystem::HandleMediaOpenFailed);
-    MediaPlayer->OnEndReached.AddDynamic(this, &URGRadioSubsystem::HandleMediaEndReached);
+    MediaPlayer->OnMediaOpened.AddDynamic(this,     &URGRadioSubsystem::HandleMediaOpened);
+    MediaPlayer->OnMediaOpenFailed.AddDynamic(this,  &URGRadioSubsystem::HandleMediaOpenFailed);
+    MediaPlayer->OnEndReached.AddDynamic(this,       &URGRadioSubsystem::HandleMediaEndReached);
 }
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ void URGRadioSubsystem::OpenStream(const FRGRadioStreamInfo& StreamInfo)
 {
     if (StreamInfo.StreamUrl.IsEmpty())
     {
-        UE_LOG(LogRadio, Error, TEXT("OpenStream: empty stream URL"));
+        UE_LOG(LogRadio, Error, TEXT("OpenStream: empty URL"));
         SetPlaybackState(ERGRadioPlaybackState::Error);
         return;
     }
@@ -60,25 +61,18 @@ void URGRadioSubsystem::OpenStream(const FRGRadioStreamInfo& StreamInfo)
     UE_LOG(LogRadio, Log, TEXT("OpenStream: %s"), *StreamInfo.DisplayName);
     SetPlaybackState(ERGRadioPlaybackState::Connecting);
 
-    // Set the URL on the media source and open it
     StreamMediaSource->StreamUrl = StreamInfo.StreamUrl;
     MediaPlayer->OpenSource(StreamMediaSource);
+    // MediaPlayer will fire OnMediaOpened → HandleMediaOpened → state = Playing
 }
 
 void URGRadioSubsystem::Play()
 {
-    if (MediaPlayer)
+    // Only needed to resume from Pause. On first open, OnMediaOpened handles it.
+    if (MediaPlayer && MediaPlayer->IsPaused())
     {
-        // PlayOnOpen=true handles auto-play; explicit Play() resumes from pause
-        if (MediaPlayer->IsPaused())
-        {
-            MediaPlayer->Play();
-            SetPlaybackState(ERGRadioPlaybackState::Playing);
-        }
-        else
-        {
-            UE_LOG(LogRadio, Verbose, TEXT("Play() called — PlayOnOpen will handle start"));
-        }
+        MediaPlayer->Play();
+        SetPlaybackState(ERGRadioPlaybackState::Playing);
     }
 }
 
@@ -103,15 +97,12 @@ void URGRadioSubsystem::Stop()
 void URGRadioSubsystem::SetVolume(float InVolume)
 {
     CurrentVolume = FMath::Clamp(InVolume, 0.0f, 1.0f);
-    UE_LOG(LogRadio, Verbose, TEXT("Volume: %.2f"), CurrentVolume);
-    // Volume is applied via UMediaSoundComponent in the level Blueprint
-    // The Blueprint listens to OnPlaybackStateChanged and reads GetVolume()
+    // Volume is applied to the UMediaSoundComponent in the level Blueprint
 }
 
 void URGRadioSubsystem::SetMuted(bool bInMuted)
 {
     bMuted = bInMuted;
-    UE_LOG(LogRadio, Verbose, TEXT("Muted: %s"), bMuted ? TEXT("true") : TEXT("false"));
 }
 
 // ─── MediaPlayer callbacks ────────────────────────────────────────────────────
@@ -120,24 +111,28 @@ void URGRadioSubsystem::HandleMediaOpened(FString OpenedUrl)
 {
     UE_LOG(LogRadio, Log, TEXT("Stream opened: %s"), *OpenedUrl);
     RetryCount = 0;
+    // Start playback — call Play() since we removed PlayOnOpen = true
+    if (MediaPlayer)
+    {
+        MediaPlayer->Play();
+    }
     SetPlaybackState(ERGRadioPlaybackState::Playing);
 }
 
 void URGRadioSubsystem::HandleMediaOpenFailed(FString FailedUrl)
 {
-    UE_LOG(LogRadio, Warning, TEXT("Stream open failed: %s (retry %d/%d)"),
+    UE_LOG(LogRadio, Warning, TEXT("Stream failed: %s (retry %d/%d)"),
         *FailedUrl, RetryCount + 1, MaxRetries);
 
     if (RetryCount < MaxRetries)
     {
         RetryCount++;
-        // Retry after a short delay by reopening the same source
         SetPlaybackState(ERGRadioPlaybackState::Connecting);
         MediaPlayer->OpenSource(StreamMediaSource);
     }
     else
     {
-        UE_LOG(LogRadio, Error, TEXT("Stream failed after %d retries: %s"), MaxRetries, *FailedUrl);
+        UE_LOG(LogRadio, Error, TEXT("Stream gave up after %d retries"), MaxRetries);
         SetPlaybackState(ERGRadioPlaybackState::Error);
         OnRadioError.Broadcast(ERGRadioPlaybackState::Error,
             FString::Printf(TEXT("Stream unavailable after %d retries"), MaxRetries));
@@ -146,8 +141,8 @@ void URGRadioSubsystem::HandleMediaOpenFailed(FString FailedUrl)
 
 void URGRadioSubsystem::HandleMediaEndReached()
 {
-    // Internet radio streams are continuous — "end reached" means stream disconnected
-    UE_LOG(LogRadio, Warning, TEXT("Stream disconnected — attempting reconnect"));
+    // Internet radio is continuous — reaching end = disconnect
+    UE_LOG(LogRadio, Warning, TEXT("Stream disconnected — reconnecting"));
     if (RetryCount < MaxRetries && !ActiveStream.StreamUrl.IsEmpty())
     {
         RetryCount++;

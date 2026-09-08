@@ -9,18 +9,17 @@
 
 class UInputMappingContext;
 class UInputAction;
+class ARGCesiumMapManager;
 struct FInputActionValue;
 
 /**
  * ARGPlayerController
  *
- * Handles all player input during a round:
- *  - Left mouse click → raycast against Cesium globe → geographic coordinate
- *    → URGMapSubsystem::PlaceGuess (places tentative marker)
- *  - Confirm Guess action → URGMatchSubsystem::SubmitGuess (via HUD button or key)
- *  - Camera pan/zoom delegated to Blueprint (spring arm + mouse drag)
+ * Handles player input during a round:
+ *  - Left mouse click  → raycast → URGMapSubsystem::PlaceGuess
+ *  - Enter / Space     → ConfirmGuess → Server RPC → URGMatchSubsystem::SubmitGuess
  *
- * Enhanced Input is used so key bindings are data-driven and remappable.
+ * CachedMapManager is resolved once in BeginPlay to avoid per-click actor iteration.
  */
 UCLASS()
 class RADIOGUESSER_API ARGPlayerController : public APlayerController
@@ -32,37 +31,31 @@ public:
 
     // ── Map interaction ───────────────────────────────────────────────────────
 
-    /**
-     * Called from Blueprint or directly — performs a line trace from the
-     * mouse cursor against the Cesium globe and translates the hit point to
-     * geographic coordinates, then calls URGMapSubsystem::PlaceGuess.
-     */
+    /** Raycast under cursor → place guess marker */
     UFUNCTION(BlueprintCallable, Category = "Gameplay|Map")
     void TryPlaceGuessAtCursor();
 
-    /**
-     * Called by the HUD CONFIRM GUESS button or a keyboard binding.
-     * Sends the pending guess to URGMatchSubsystem.
-     */
+    /** Confirm and submit the pending guess */
     UFUNCTION(BlueprintCallable, Category = "Gameplay|Match")
     void ConfirmGuess();
+
+    /** Call at the start of each new round to allow a new guess */
+    UFUNCTION(BlueprintCallable, Category = "Gameplay|Match")
+    void ResetGuessLock();
 
     // ── Server RPC ────────────────────────────────────────────────────────────
 
     UFUNCTION(Server, Reliable, WithValidation)
     void Server_SubmitGuess(FRGGeoCoordinate Coordinate, const FString& RoundToken);
 
-    // ── Input setup ───────────────────────────────────────────────────────────
+    // ── Input assets (assign in BP_RGPlayerController defaults) ───────────────
 
-    /** Assign in BP_RadioGuesserPlayerController defaults — IMC_RadioGuesser */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
     TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
-    /** Left-click on globe — IA_MapClick */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
     TObjectPtr<UInputAction> MapClickAction;
 
-    /** Enter / Space to confirm guess — IA_ConfirmGuess */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
     TObjectPtr<UInputAction> ConfirmGuessAction;
 
@@ -71,8 +64,11 @@ protected:
     virtual void SetupInputComponent() override;
 
 private:
-    void OnMapClick(const FInputActionValue& Value);
+    void OnMapClick    (const FInputActionValue& Value);
     void OnConfirmGuess(const FInputActionValue& Value);
+
+    /** Cached at BeginPlay — avoids TActorIterator every click */
+    UPROPERTY() TObjectPtr<ARGCesiumMapManager> CachedMapManager;
 
     bool bGuessSubmitted = false;
 };

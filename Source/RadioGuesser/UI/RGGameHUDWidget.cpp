@@ -15,27 +15,23 @@ void URGGameHUDWidget::NativeConstruct()
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
-    // Bind to MatchSubsystem
     if (URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>())
     {
         Match->OnMatchStateChanged.AddDynamic(this, &URGGameHUDWidget::HandleMatchStateChanged);
         Match->OnRoundStarted.AddDynamic(this,      &URGGameHUDWidget::HandleRoundStarted);
     }
 
-    // Bind to HUDSubsystem timer
     if (URGHUDSubsystem* HUD = GI->GetSubsystem<URGHUDSubsystem>())
     {
         HUD->OnTimerTick.AddDynamic(this,    &URGGameHUDWidget::HandleTimerTick);
         HUD->OnTimerExpired.AddDynamic(this, &URGGameHUDWidget::HandleTimerExpired);
     }
 
-    // Bind to RadioSubsystem
     if (URGRadioSubsystem* Radio = GI->GetSubsystem<URGRadioSubsystem>())
     {
         Radio->OnPlaybackStateChanged.AddDynamic(this, &URGGameHUDWidget::HandlePlaybackStateChanged);
     }
 
-    // Bind to MapSubsystem (know when a guess is placed)
     if (URGMapSubsystem* Map = GI->GetSubsystem<URGMapSubsystem>())
     {
         Map->OnGuessPlaced.AddDynamic(this, &URGGameHUDWidget::HandleGuessPlaced);
@@ -44,7 +40,6 @@ void URGGameHUDWidget::NativeConstruct()
 
 void URGGameHUDWidget::NativeDestruct()
 {
-    // Unbind all delegates — prevents dangling references
     if (UGameInstance* GI = GetGameInstance())
     {
         if (URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>())
@@ -76,14 +71,10 @@ void URGGameHUDWidget::OnConfirmGuessClicked()
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
-    URGMapSubsystem* Map = GI->GetSubsystem<URGMapSubsystem>();
+    URGMapSubsystem*   Map   = GI->GetSubsystem<URGMapSubsystem>();
     URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>();
 
-    if (!Map || !Match || !Map->HasPendingGuess())
-    {
-        UE_LOG(LogMatch, Warning, TEXT("ConfirmGuess: no pending guess"));
-        return;
-    }
+    if (!Map || !Match || !Map->HasPendingGuess()) return;
 
     Match->SubmitGuess(Map->GetPendingGuess());
     bHasPendingGuess = false;
@@ -126,8 +117,10 @@ void URGGameHUDWidget::HandleMatchStateChanged(ERGMatchState NewState)
 void URGGameHUDWidget::HandleRoundStarted(FRGRoundData RoundData)
 {
     bHasPendingGuess = false;
+    OnRoundDataUpdated(RoundData);
+    OnGuessPinUpdated(false);
 
-    // Start HUD timer
+    // Start the round countdown timer
     if (UGameInstance* GI = GetGameInstance())
     {
         if (URGHUDSubsystem* HUD = GI->GetSubsystem<URGHUDSubsystem>())
@@ -135,9 +128,6 @@ void URGGameHUDWidget::HandleRoundStarted(FRGRoundData RoundData)
             HUD->StartRoundTimer(RoundData.DurationSeconds);
         }
     }
-
-    OnRoundDataUpdated(RoundData);
-    OnGuessPinUpdated(false);
 }
 
 void URGGameHUDWidget::HandleTimerTick(float SecondsRemaining)
@@ -147,24 +137,9 @@ void URGGameHUDWidget::HandleTimerTick(float SecondsRemaining)
 
 void URGGameHUDWidget::HandleTimerExpired()
 {
-    // Auto-submit whatever guess the player has placed
-    UE_LOG(LogMatch, Log, TEXT("Timer expired — auto-submitting guess"));
-    if (bHasPendingGuess)
-    {
-        OnConfirmGuessClicked();
-    }
-    else
-    {
-        // Submit a null guess (server will give 0 score)
-        if (UGameInstance* GI = GetGameInstance())
-        {
-            if (URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>())
-            {
-                // 0,0 coordinates as fallback — server will score as maximum distance
-                Match->SubmitGuess(FRGGeoCoordinate{});
-            }
-        }
-    }
+    UE_LOG(LogMatch, Log, TEXT("HUD: timer expired — auto-confirming guess"));
+    // Auto-submit whatever is placed; if nothing placed, submit (0,0)
+    OnConfirmGuessClicked();
 }
 
 void URGGameHUDWidget::HandlePlaybackStateChanged(ERGRadioPlaybackState NewState)
@@ -178,11 +153,11 @@ void URGGameHUDWidget::HandleGuessPlaced(FRGGeoCoordinate /*Coordinate*/)
     OnGuessPinUpdated(true);
 }
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 FString URGGameHUDWidget::FormatTime(float Seconds) const
 {
-    const int32 Minutes = FMath::FloorToInt(Seconds / 60.f);
-    const int32 Secs    = FMath::FloorToInt(Seconds) % 60;
-    return FString::Printf(TEXT("%02d:%02d"), Minutes, Secs);
+    const int32 Mins = FMath::FloorToInt(Seconds / 60.f);
+    const int32 Secs = FMath::FloorToInt(Seconds) % 60;
+    return FString::Printf(TEXT("%02d:%02d"), Mins, Secs);
 }

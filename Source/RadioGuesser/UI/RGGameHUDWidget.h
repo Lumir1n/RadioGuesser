@@ -12,13 +12,17 @@
 /**
  * URGGameHUDWidget
  *
- * C++ base for the in-game HUD widget.
- * Blueprint WBP_GameHUD subclasses this.
+ * C++ base for the in-game HUD Blueprint widget (WBP_GameHUD).
  *
- * Button bindings:
- *   Btn_ConfirmGuess → OnConfirmGuessClicked()
- *   Slider_Volume    → OnVolumeChanged(float)
- *   Btn_Mute         → OnMuteToggled()
+ * In Blueprint, bind:
+ *   Btn_ConfirmGuess.OnClicked → OnConfirmGuessClicked()
+ *   Slider_Volume.OnValueChanged → OnVolumeChanged(float)
+ *
+ * Override these Blueprint events to update visuals:
+ *   OnRoundDataUpdated  — update round number text
+ *   OnTimerUpdated      — update countdown text
+ *   OnRadioStateUpdated — update radio status label
+ *   OnGuessPinUpdated   — enable/disable confirm button
  */
 UCLASS(Abstract, BlueprintType, Blueprintable)
 class RADIOGUESSER_API URGGameHUDWidget : public UUserWidget
@@ -30,7 +34,7 @@ public:
     virtual void NativeDestruct() override;
 
 protected:
-    // ── Called by Blueprint button bindings ───────────────────────────────────
+    // ── Button callbacks (call from Blueprint) ────────────────────────────────
 
     UFUNCTION(BlueprintCallable, Category = "HUD")
     void OnConfirmGuessClicked();
@@ -41,7 +45,7 @@ protected:
     UFUNCTION(BlueprintCallable, Category = "HUD")
     void OnMuteToggled();
 
-    // ── Subsystem event handlers ──────────────────────────────────────────────
+    // ── Subsystem event handlers (bound in NativeConstruct) ───────────────────
 
     UFUNCTION() void HandleMatchStateChanged(ERGMatchState NewState);
     UFUNCTION() void HandleRoundStarted(FRGRoundData RoundData);
@@ -69,6 +73,7 @@ protected:
     UFUNCTION(BlueprintPure, Category = "HUD")
     bool HasPendingGuess() const { return bHasPendingGuess; }
 
+    /** Format seconds as "MM:SS" */
     UFUNCTION(BlueprintPure, Category = "HUD")
     FString FormatTime(float Seconds) const;
 

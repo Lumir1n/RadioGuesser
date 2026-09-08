@@ -37,10 +37,6 @@ void URGRoundResultWidget::ShowResult(const FRGGuessResult& Result,
                                        int32 InRoundNumber,
                                        int32 InTotalRounds)
 {
-    CachedTotalScore  = InTotalScore;
-    CachedRoundNumber = InRoundNumber;
-    CachedTotalRounds = InTotalRounds;
-
     const bool bIsFinal = (InRoundNumber >= InTotalRounds);
     OnFinalRound(bIsFinal);
 
@@ -64,6 +60,7 @@ void URGRoundResultWidget::OnNextRoundClicked()
             Match->ProceedToNextRound();
         }
     }
+    SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void URGRoundResultWidget::HandleRoundResultReady(FRGGuessResult Result)
@@ -72,14 +69,14 @@ void URGRoundResultWidget::HandleRoundResultReady(FRGGuessResult Result)
     {
         if (URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>())
         {
-            ShowResult(Result,
+            ShowResult(
+                Result,
                 Match->GetTotalScore(),
                 Match->GetCurrentRound().RoundNumber,
-                Match->GetCurrentRound().TotalRounds);
+                Match->GetCurrentRound().TotalRounds
+            );
         }
     }
-
-    // Make this widget visible
     SetVisibility(ESlateVisibility::Visible);
 }
 

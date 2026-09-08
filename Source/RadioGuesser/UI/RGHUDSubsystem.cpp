@@ -39,6 +39,7 @@ void URGHUDSubsystem::StartRoundTimer(float DurationSeconds)
 void URGHUDSubsystem::StopTimer()
 {
     bTimerRunning = false;
+
     if (UGameInstance* GI = GetGameInstance())
     {
         if (UWorld* World = GI->GetWorld())
@@ -51,12 +52,14 @@ void URGHUDSubsystem::StopTimer()
 void URGHUDSubsystem::TickTimer()
 {
     TimeRemaining -= 1.0f;
+
     if (TimeRemaining <= 0.0f)
     {
         TimeRemaining = 0.0f;
         StopTimer();
         OnTimerTick.Broadcast(0.0f);
         OnTimerExpired.Broadcast();
+        UE_LOG(LogMatch, Log, TEXT("Round timer expired"));
     }
     else
     {

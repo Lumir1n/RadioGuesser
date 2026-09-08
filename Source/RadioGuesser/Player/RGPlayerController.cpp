@@ -8,12 +8,10 @@
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
 #include "EngineUtils.h"
-#include "Kismet/GameplayStatics.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
 #include "InputAction.h"
-#include "CollisionQueryParams.h"
 #include "Engine/EngineTypes.h"
 
 ARGPlayerController::ARGPlayerController()
@@ -28,21 +26,27 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
+    // Cache map manager reference once at begin play
+    for (TActorIterator<ARGCesiumMapManager> It(GetWorld()); It; ++It)
+    {
+        CachedMapManager = *It;
+        break;
+    }
+
+    // Register Enhanced Input mapping context
     if (ULocalPlayer* LP = GetLocalPlayer())
     {
-        if (UEnhancedInputLocalPlayerSubsystem* InputSys =
+        if (UEnhancedInputLocalPlayerSubsystem* Sys =
             ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP))
         {
             if (DefaultMappingContext)
             {
-                InputSys->AddMappingContext(DefaultMappingContext, 0);
-                UE_LOG(LogMatch, Log, TEXT("Enhanced Input mapping context added"));
+                Sys->AddMappingContext(DefaultMappingContext, 0);
             }
             else
             {
-                UE_LOG(LogMatch, Warning,
-                    TEXT("ARGPlayerController: DefaultMappingContext not set. "
-                         "Assign IMC_RadioGuesser in BP defaults."));
+                UE_LOG(LogMatch, Warning, TEXT("ARGPlayerController: DefaultMappingContext not set. "
+                    "Assign IMC_RadioGuesser in BP_RGPlayerController defaults."));
             }
         }
     }
@@ -91,15 +95,7 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>();
     if (!Match || Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
-    // Find ARGCesiumMapManager in the level
-    ARGCesiumMapManager* MapManager = nullptr;
-    for (TActorIterator<ARGCesiumMapManager> It(GetWorld()); It; ++It)
-    {
-        MapManager = *It;
-        break;
-    }
-
-    if (!MapManager)
+    if (!CachedMapManager)
     {
         UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: No ARGCesiumMapManager in level."));
         return;
@@ -114,7 +110,7 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
 
     if (bHit && HitResult.IsValidBlockingHit())
     {
-        MapManager->HandleMapClick(HitResult.ImpactPoint);
+        CachedMapManager->HandleMapClick(HitResult.ImpactPoint);
     }
 }
 
@@ -137,7 +133,14 @@ void ARGPlayerController::ConfirmGuess()
     if (Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
     bGuessSubmitted = true;
-    Server_SubmitGuess(Map->GetPendingGuess(), Match->GetCurrentRound().RoundToken);
+
+    const FString RoundToken = Match->GetCurrentRound().RoundToken;
+    Server_SubmitGuess(Map->GetPendingGuess(), RoundToken);
+}
+
+void ARGPlayerController::ResetGuessLock()
+{
+    bGuessSubmitted = false;
 }
 
 // ─── Server RPC ───────────────────────────────────────────────────────────────
@@ -160,4 +163,7 @@ void ARGPlayerController::Server_SubmitGuess_Implementation(FRGGeoCoordinate Coo
     {
         Match->SubmitGuess(Coordinate);
     }
+
+    UE_LOG(LogMatch, Log, TEXT("Server_SubmitGuess: lat=%.4f lon=%.4f"),
+        Coordinate.Latitude, Coordinate.Longitude);
 }
