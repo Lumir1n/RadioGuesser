@@ -6,6 +6,7 @@
 #include "Engine/GameInstance.h"
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 #include "CesiumGeoreference.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
@@ -34,9 +35,11 @@ void ARGCesiumMapManager::BeginPlay()
     // Auto-find CesiumGeoreference in the level if not set in editor
     if (!CesiumGeoreference)
     {
-        // GetActorOfClass takes TSubclassOf<AActor> — StaticClass() satisfies this implicitly
-        AActor* Found = UGameplayStatics::GetActorOfClass(GetWorld(), ACesiumGeoreference::StaticClass());
-        CesiumGeoreference = Cast<ACesiumGeoreference>(Found);
+        for (TActorIterator<ACesiumGeoreference> It(GetWorld()); It; ++It)
+        {
+            CesiumGeoreference = *It;
+            break;
+        }
 
         if (!CesiumGeoreference)
         {

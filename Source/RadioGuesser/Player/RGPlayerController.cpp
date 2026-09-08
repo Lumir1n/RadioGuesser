@@ -7,6 +7,7 @@
 #include "Match/RGMatchSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -91,8 +92,12 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     if (!Match || Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
     // Find ARGCesiumMapManager in the level
-    AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), ARGCesiumMapManager::StaticClass());
-    ARGCesiumMapManager* MapManager = Cast<ARGCesiumMapManager>(FoundActor);
+    ARGCesiumMapManager* MapManager = nullptr;
+    for (TActorIterator<ARGCesiumMapManager> It(GetWorld()); It; ++It)
+    {
+        MapManager = *It;
+        break;
+    }
 
     if (!MapManager)
     {
