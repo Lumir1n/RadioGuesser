@@ -66,6 +66,21 @@ try
         client.DefaultRequestHeaders.Add("User-Agent", "Radioguesser/1.0");
     });
 
+    // ── HttpClient (for Supabase REST API) ───────────────────────────────────
+    builder.Services.AddHttpClient("Supabase", client =>
+    {
+        var supabaseUrl = builder.Configuration["Supabase:Url"]
+            ?? "https://dmwnegtvotnrajzpyfad.supabase.co";
+        // Ensure URL ends without trailing slash
+        client.BaseAddress = new Uri(supabaseUrl.TrimEnd('/') + "/");
+        // Service role key — grants full DB access, bypasses RLS
+        // In production this comes from environment variables, never hardcoded
+        var serviceKey = builder.Configuration["Supabase:ServiceRoleKey"] ?? string.Empty;
+        client.DefaultRequestHeaders.Add("apikey", serviceKey);
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {serviceKey}");
+        client.DefaultRequestHeaders.Add("Prefer", "return=representation");
+    });
+
     var app = builder.Build();
 
     app.UseSerilogRequestLogging();
