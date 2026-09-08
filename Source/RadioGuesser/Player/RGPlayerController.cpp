@@ -6,11 +6,14 @@
 #include "Map/RGCesiumMapManager.h"
 #include "Match/RGMatchSubsystem.h"
 #include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
 #include "Kismet/GameplayStatics.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
 #include "InputAction.h"
+#include "CollisionQueryParams.h"
+#include "Engine/EngineTypes.h"
 
 ARGPlayerController::ARGPlayerController()
 {
@@ -24,11 +27,10 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // Register Enhanced Input mapping context
     if (ULocalPlayer* LP = GetLocalPlayer())
     {
         if (UEnhancedInputLocalPlayerSubsystem* InputSys =
-            LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+            ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP))
         {
             if (DefaultMappingContext)
             {
@@ -39,7 +41,7 @@ void ARGPlayerController::BeginPlay()
             {
                 UE_LOG(LogMatch, Warning,
                     TEXT("ARGPlayerController: DefaultMappingContext not set. "
-                         "Assign IMC_RadioGuesser in BP_RadioGuesserPlayerController defaults."));
+                         "Assign IMC_RadioGuesser in BP defaults."));
             }
         }
     }
@@ -53,7 +55,7 @@ void ARGPlayerController::SetupInputComponent()
     {
         if (MapClickAction)
         {
-            EIC->BindAction(MapClickAction,    ETriggerEvent::Triggered,
+            EIC->BindAction(MapClickAction,     ETriggerEvent::Triggered,
                 this, &ARGPlayerController::OnMapClick);
         }
         if (ConfirmGuessAction)
@@ -61,12 +63,6 @@ void ARGPlayerController::SetupInputComponent()
             EIC->BindAction(ConfirmGuessAction, ETriggerEvent::Triggered,
                 this, &ARGPlayerController::OnConfirmGuess);
         }
-    }
-    else
-    {
-        UE_LOG(LogMatch, Warning,
-            TEXT("ARGPlayerController: InputComponent is not UEnhancedInputComponent. "
-                 "Check Project Settings → Input → Default Input Component Class."));
     }
 }
 
@@ -86,7 +82,6 @@ void ARGPlayerController::OnConfirmGuess(const FInputActionValue& /*Value*/)
 
 void ARGPlayerController::TryPlaceGuessAtCursor()
 {
-    // Don't allow clicking after guess is locked
     if (bGuessSubmitted) return;
 
     UGameInstance* GI = GetGameInstance();
@@ -95,19 +90,18 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>();
     if (!Match || Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
-    // Find the CesiumMapManager in the level
-    ARGCesiumMapManager* MapManager = Cast<ARGCesiumMapManager>(
-        UGameplayStatics::GetActorOfClass(GetWorld(), ARGCesiumMapManager::StaticClass()));
+    // Find ARGCesiumMapManager in the level
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ARGCesiumMapManager::StaticClass(), FoundActors);
+    ARGCesiumMapManager* MapManager = FoundActors.Num() > 0
+        ? Cast<ARGCesiumMapManager>(FoundActors[0]) : nullptr;
 
     if (!MapManager)
     {
-        UE_LOG(LogMap, Warning,
-            TEXT("TryPlaceGuessAtCursor: No ARGCesiumMapManager in level. "
-                 "Place one in the WorldMap level."));
+        UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: No ARGCesiumMapManager in level."));
         return;
     }
 
-    // Raycast from mouse cursor into the scene
     FHitResult HitResult;
     const bool bHit = GetHitResultUnderCursorByChannel(
         UEngineTypes::ConvertToTraceType(ECC_Visibility),
@@ -118,12 +112,6 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     if (bHit && HitResult.IsValidBlockingHit())
     {
         MapManager->HandleMapClick(HitResult.ImpactPoint);
-        UE_LOG(LogMap, Verbose, TEXT("Map click hit at world pos: %s"),
-            *HitResult.ImpactPoint.ToString());
-    }
-    else
-    {
-        UE_LOG(LogMap, Verbose, TEXT("Map click — no hit"));
     }
 }
 
@@ -134,26 +122,19 @@ void ARGPlayerController::ConfirmGuess()
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
-    URGMapSubsystem*  Map   = GI->GetSubsystem<URGMapSubsystem>();
+    URGMapSubsystem*   Map   = GI->GetSubsystem<URGMapSubsystem>();
     URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>();
-
     if (!Map || !Match) return;
+
     if (!Map->HasPendingGuess())
     {
         UE_LOG(LogMatch, Warning, TEXT("ConfirmGuess: no guess placed yet"));
         return;
     }
-    if (Match->GetMatchState() != ERGMatchState::RoundActive)
-    {
-        UE_LOG(LogMatch, Warning, TEXT("ConfirmGuess: round not active"));
-        return;
-    }
+    if (Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
     bGuessSubmitted = true;
-
-    const FString RoundToken = Match->GetCurrentRound().RoundToken;
-    // In multiplayer this goes via Server RPC; in solo we submit directly
-    Server_SubmitGuess(Map->GetPendingGuess(), RoundToken);
+    Server_SubmitGuess(Map->GetPendingGuess(), Match->GetCurrentRound().RoundToken);
 }
 
 // ─── Server RPC ───────────────────────────────────────────────────────────────
@@ -169,9 +150,6 @@ bool ARGPlayerController::Server_SubmitGuess_Validate(FRGGeoCoordinate Coordinat
 void ARGPlayerController::Server_SubmitGuess_Implementation(FRGGeoCoordinate Coordinate,
                                                              const FString& /*RoundToken*/)
 {
-    // In solo mode the server and client are the same process;
-    // here we forward directly to MatchSubsystem.
-    // In dedicated-server multiplayer this will call the authoritative GameMode.
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
@@ -179,7 +157,4 @@ void ARGPlayerController::Server_SubmitGuess_Implementation(FRGGeoCoordinate Coo
     {
         Match->SubmitGuess(Coordinate);
     }
-
-    UE_LOG(LogMatch, Log, TEXT("Server_SubmitGuess: lat=%.4f lon=%.4f"),
-        Coordinate.Latitude, Coordinate.Longitude);
 }

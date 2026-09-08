@@ -5,6 +5,7 @@
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Misc/ConfigCacheIni.h"
 
 void URGBackendSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {

@@ -34,18 +34,17 @@ void ARGCesiumMapManager::BeginPlay()
     // Auto-find CesiumGeoreference in the level if not set in editor
     if (!CesiumGeoreference)
     {
-        CesiumGeoreference = Cast<ACesiumGeoreference>(
-            UGameplayStatics::GetActorOfClass(GetWorld(), ACesiumGeoreference::StaticClass()));
-
-        if (!CesiumGeoreference)
+        TArray<AActor*> Found;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACesiumGeoreference::StaticClass(), Found);
+        if (Found.Num() > 0)
         {
-            UE_LOG(LogMap, Warning,
-                TEXT("ARGCesiumMapManager: No CesiumGeoreference actor in level. "
-                     "Drag one into the level or assign it in Details."));
+            CesiumGeoreference = Cast<ACesiumGeoreference>(Found[0]);
+            UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found CesiumGeoreference automatically"));
         }
         else
         {
-            UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found CesiumGeoreference automatically"));
+            UE_LOG(LogMap, Warning,
+                TEXT("ARGCesiumMapManager: No CesiumGeoreference in level. Assign it in Details."));
         }
     }
 

@@ -3,6 +3,7 @@
 #include "UI/RGHUDSubsystem.h"
 #include "RadioGuesser.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
 
 void URGHUDSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -22,14 +23,15 @@ void URGHUDSubsystem::StartRoundTimer(float DurationSeconds)
     TimeRemaining = DurationSeconds;
     bTimerRunning = true;
 
-    if (UWorld* World = GetGameInstance()->GetWorld())
+    UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+    if (World)
     {
         World->GetTimerManager().SetTimer(
             TimerHandle,
             this,
             &URGHUDSubsystem::TickTimer,
-            1.0f,       // fire every second
-            true        // looping
+            1.0f,
+            true
         );
     }
     OnTimerTick.Broadcast(TimeRemaining);
@@ -38,7 +40,8 @@ void URGHUDSubsystem::StartRoundTimer(float DurationSeconds)
 void URGHUDSubsystem::StopTimer()
 {
     bTimerRunning = false;
-    if (UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr)
+    UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+    if (World)
     {
         World->GetTimerManager().ClearTimer(TimerHandle);
     }
@@ -53,7 +56,6 @@ void URGHUDSubsystem::TickTimer()
         StopTimer();
         OnTimerTick.Broadcast(0.0f);
         OnTimerExpired.Broadcast();
-        UE_LOG(LogMatch, Log, TEXT("Round timer expired"));
     }
     else
     {
