@@ -4,21 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
-#include "RGHUDSubsystem.generated.h"
-
-// FTimerHandle is in Engine module — available via CoreMinimal through Engine.h
-// but we include the explicit header to be safe
-#include "Engine/TimerHandle.h"
+#include "Engine/EngineTypes.h"
+#include "RGHUDSubsystem.generated.h"   // MUST be last include
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTimerTick,  float, SecondsRemaining);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTimerExpired);
 
-/**
- * URGHUDSubsystem
- *
- * Manages the round countdown timer. Fires OnTimerTick every second
- * and OnTimerExpired when time runs out. Widgets bind to these delegates.
- */
 UCLASS()
 class RADIOGUESSER_API URGHUDSubsystem : public UGameInstanceSubsystem
 {
