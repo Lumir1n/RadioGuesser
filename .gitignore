@@ -1,0 +1,45 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.user
+*.xcworkspacedata
+*.xcuserstate
+
+# Visual Studio
+.vs/
+*.sln.docstates
+
+# Supabase local dev
+supabase/.temp/
+supabase/.branches/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+
+# Build artifacts
+*.dll
+*.pdb
+
+# .NET / C# backend
+Server/**/bin/
+Server/**/obj/
+Server/**/.vs/
+*.user
+appsettings.Development.json
