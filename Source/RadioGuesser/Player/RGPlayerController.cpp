@@ -91,10 +91,8 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     if (!Match || Match->GetMatchState() != ERGMatchState::RoundActive) return;
 
     // Find ARGCesiumMapManager in the level
-    TArray<AActor*> FoundActors;
-    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ARGCesiumMapManager::StaticClass(), FoundActors);
-    ARGCesiumMapManager* MapManager = FoundActors.Num() > 0
-        ? Cast<ARGCesiumMapManager>(FoundActors[0]) : nullptr;
+    AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), ARGCesiumMapManager::StaticClass());
+    ARGCesiumMapManager* MapManager = Cast<ARGCesiumMapManager>(FoundActor);
 
     if (!MapManager)
     {

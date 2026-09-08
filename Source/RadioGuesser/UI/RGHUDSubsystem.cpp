@@ -2,6 +2,7 @@
 
 #include "UI/RGHUDSubsystem.h"
 #include "RadioGuesser.h"
+#include "TimerManager.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 
@@ -23,16 +24,14 @@ void URGHUDSubsystem::StartRoundTimer(float DurationSeconds)
     TimeRemaining = DurationSeconds;
     bTimerRunning = true;
 
-    UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-    if (World)
+    if (UGameInstance* GI = GetGameInstance())
     {
-        World->GetTimerManager().SetTimer(
-            TimerHandle,
-            this,
-            &URGHUDSubsystem::TickTimer,
-            1.0f,
-            true
-        );
+        if (UWorld* World = GI->GetWorld())
+        {
+            FTimerDelegate Del;
+            Del.BindUObject(this, &URGHUDSubsystem::TickTimer);
+            World->GetTimerManager().SetTimer(TimerHandle, Del, 1.0f, true);
+        }
     }
     OnTimerTick.Broadcast(TimeRemaining);
 }
@@ -40,10 +39,12 @@ void URGHUDSubsystem::StartRoundTimer(float DurationSeconds)
 void URGHUDSubsystem::StopTimer()
 {
     bTimerRunning = false;
-    UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-    if (World)
+    if (UGameInstance* GI = GetGameInstance())
     {
-        World->GetTimerManager().ClearTimer(TimerHandle);
+        if (UWorld* World = GI->GetWorld())
+        {
+            World->GetTimerManager().ClearTimer(TimerHandle);
+        }
     }
 }
 
