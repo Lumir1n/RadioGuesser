@@ -7,7 +7,7 @@ public class RadioGuesser : ModuleRules
 {
     public RadioGuesser(ReadOnlyTargetRules Target) : base(Target)
     {
-        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        PCHUsage = PCHUsageMode.NoPCHs;   // Saves disk space during compilation
 
         // Make all subdirectories under Source/RadioGuesser available as include roots.
         // This lets us write #include "Radio/RGRadioSubsystem.h" from anywhere in the module.

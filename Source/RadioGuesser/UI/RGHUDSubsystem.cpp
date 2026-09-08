@@ -2,7 +2,6 @@
 
 #include "UI/RGHUDSubsystem.h"
 #include "RadioGuesser.h"
-#include "TimerManager.h"
 #include "Engine/World.h"
 
 void URGHUDSubsystem::Initialize(FSubsystemCollectionBase& Collection)

@@ -67,14 +67,18 @@ void URGRadioSubsystem::OpenStream(const FRGRadioStreamInfo& StreamInfo)
 
 void URGRadioSubsystem::Play()
 {
-    if (MediaPlayer && MediaPlayer->CanPlay())
+    if (MediaPlayer)
     {
-        MediaPlayer->Play();
-        SetPlaybackState(ERGRadioPlaybackState::Playing);
-    }
-    else
-    {
-        UE_LOG(LogRadio, Warning, TEXT("Play called but media not ready"));
+        // PlayOnOpen=true handles auto-play; explicit Play() resumes from pause
+        if (MediaPlayer->IsPaused())
+        {
+            MediaPlayer->Play();
+            SetPlaybackState(ERGRadioPlaybackState::Playing);
+        }
+        else
+        {
+            UE_LOG(LogRadio, Verbose, TEXT("Play() called — PlayOnOpen will handle start"));
+        }
     }
 }
 

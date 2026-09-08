@@ -6,7 +6,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "RGBackendSubsystem.generated.h"
 
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FOnHttpResponse, bool, bSuccess, const FString&, ResponseBody);
+DECLARE_DELEGATE_TwoParams(FOnHttpResponse, bool /*bSuccess*/, const FString& /*ResponseBody*/);
 
 /**
  * URGBackendSubsystem
