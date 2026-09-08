@@ -26,6 +26,7 @@ public class RadioGuesser : ModuleRules
             "HTTP",
             "Json",
             "JsonUtilities",
+            "CesiumRuntime",   // Cesium for Unreal
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

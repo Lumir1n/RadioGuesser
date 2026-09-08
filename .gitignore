@@ -41,5 +41,11 @@ node_modules/
 Server/**/bin/
 Server/**/obj/
 Server/**/.vs/
+Tools/**/bin/
+Tools/**/obj/
 *.user
 appsettings.Development.json
+
+# Large binary plugins — install separately
+# Cesium for Unreal: download from https://github.com/CesiumGS/cesium-unreal/releases
+Plugins/CesiumForUnreal/

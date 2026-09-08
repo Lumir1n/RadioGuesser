@@ -48,7 +48,7 @@ try
     // ── Application services ──────────────────────────────────────────────────
     builder.Services.AddScoped<IRadioCatalogProvider, RadioBrowserProvider>();
     builder.Services.AddScoped<IRadioImportService,   RadioImportService>();
-    builder.Services.AddScoped<IScoringService,        ScoringService>();
+    builder.Services.AddSingleton<IScoringService,    ScoringService>();
 
     // ── Controllers ───────────────────────────────────────────────────────────
     builder.Services.AddControllers();
