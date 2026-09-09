@@ -1,11 +1,9 @@
 // Copyright RadioGuesser. All Rights Reserved.
 
 using Serilog;
-using Radioguesser.Server.Infrastructure.Persistence;
 using Radioguesser.Server.Application.Interfaces;
 using Radioguesser.Server.Application.Services;
 using Radioguesser.Server.Infrastructure.Radio;
-using Microsoft.EntityFrameworkCore;
 
 // ── Serilog bootstrap ─────────────────────────────────────────────────────────
 
@@ -24,27 +22,6 @@ try
            .Enrich.FromLogContext()
            .WriteTo.Console());
 
-    // ── Database ──────────────────────────────────────────────────────────────
-    builder.Services.AddDbContext<RadioguesserDbContext>(options =>
-        options.UseNpgsql(
-            builder.Configuration.GetConnectionString("DefaultConnection"),
-            npgsql => npgsql.UseNetTopologySuite()));
-
-    // ── Redis ─────────────────────────────────────────────────────────────────
-    builder.Services.AddStackExchangeRedisCache(options =>
-        options.Configuration = builder.Configuration.GetConnectionString("Redis"));
-
-    // ── Auth (JWT via Supabase) ────────────────────────────────────────────────
-    builder.Services
-        .AddAuthentication("Bearer")
-        .AddJwtBearer("Bearer", options =>
-        {
-            options.Authority = builder.Configuration["Supabase:Url"];
-            options.Audience  = "authenticated";
-            options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
-        });
-    builder.Services.AddAuthorization();
-
     // ── Application services ──────────────────────────────────────────────────
     builder.Services.AddScoped<IRadioCatalogProvider, RadioBrowserProvider>();
     builder.Services.AddScoped<IRadioImportService,   RadioImportService>();
@@ -54,50 +31,48 @@ try
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
 
-    // ── CORS (development only — tighten for production) ─────────────────────
+    // ── CORS ──────────────────────────────────────────────────────────────────
     builder.Services.AddCors(opts =>
         opts.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
-    // ── HttpClient (for Radio Browser API) ───────────────────────────────────
+    // ── HttpClient: Radio Browser ─────────────────────────────────────────────
     builder.Services.AddHttpClient("RadioBrowser", client =>
     {
         client.BaseAddress = new Uri(
-            builder.Configuration["RadioBrowser:BaseUrl"] ?? "https://all.api.radio-browser.info/json/");
+            builder.Configuration["RadioBrowser:BaseUrl"]
+            ?? "https://all.api.radio-browser.info/json/");
         client.DefaultRequestHeaders.Add("User-Agent", "Radioguesser/1.0");
     });
 
-    // ── HttpClient (for Supabase REST API) ───────────────────────────────────
+    // ── HttpClient: Supabase REST (uses service role — bypasses RLS) ──────────
     builder.Services.AddHttpClient("Supabase", client =>
     {
-        var supabaseUrl = builder.Configuration["Supabase:Url"]
-            ?? "https://dmwnegtvotnrajzpyfad.supabase.co";
-        // Ensure URL ends without trailing slash
-        client.BaseAddress = new Uri(supabaseUrl.TrimEnd('/') + "/");
-        // Service role key — grants full DB access, bypasses RLS
-        // In production this comes from environment variables, never hardcoded
-        var serviceKey = builder.Configuration["Supabase:ServiceRoleKey"] ?? string.Empty;
-        client.DefaultRequestHeaders.Add("apikey", serviceKey);
+        var url        = builder.Configuration["Supabase:Url"]
+                         ?? throw new InvalidOperationException("Supabase:Url not configured");
+        var serviceKey = builder.Configuration["Supabase:ServiceRoleKey"]
+                         ?? throw new InvalidOperationException("Supabase:ServiceRoleKey not configured");
+
+        client.BaseAddress = new Uri(url.TrimEnd('/') + "/");
+        client.DefaultRequestHeaders.Add("apikey",        serviceKey);
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {serviceKey}");
-        client.DefaultRequestHeaders.Add("Prefer", "return=representation");
+        client.DefaultRequestHeaders.Add("Prefer",        "return=representation");
     });
 
     var app = builder.Build();
 
     app.UseSerilogRequestLogging();
     app.UseCors();
-    app.UseAuthentication();
-    app.UseAuthorization();
     app.MapControllers();
 
-    // ── Health check endpoint ─────────────────────────────────────────────────
+    // ── Health check ──────────────────────────────────────────────────────────
     app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
-    Log.Information("RadioGuesser server starting on {Urls}", app.Urls);
+    Log.Information("RadioGuesser backend starting...");
     app.Run();
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "RadioGuesser server failed to start");
+    Log.Fatal(ex, "RadioGuesser backend failed to start");
     throw;
 }
 finally
