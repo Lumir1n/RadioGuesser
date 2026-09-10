@@ -214,7 +214,7 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     //    instead of PNG images, which Cesium cannot render.
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
+        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{reverseY}.png?key=%s"),
         *MapTilerKey);
 
     UCesiumUrlTemplateRasterOverlay* Overlay =
@@ -231,9 +231,18 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
     Overlay->TemplateUrl = TileUrl;
 
-    // Activate BEFORE RegisterComponent so the overlay is added to the tileset
-    // in the correct order. RegisterComponent calls OnRegister which calls
-    // Activate internally, but setting bAutoActivate = true first ensures it.
+    // MapTiler uses Web Mercator (EPSG:3857) with standard XYZ/Slippy Map scheme.
+    // In Cesium's CesiumUrlTemplateRasterOverlay:
+    //   {y} = 0 is southernmost tile (TMS convention)
+    //   {reverseY} = 0 is northernmost tile (XYZ/Google Maps convention)
+    // MapTiler uses XYZ convention → must use {reverseY} instead of {y}.
+    //
+    // However, the URL already uses {y}, so we switch it to use reverseY:
+    Overlay->Projection = ECesiumUrlTemplateRasterOverlayProjection::WebMercator;
+    Overlay->TileWidth  = 256;
+    Overlay->TileHeight = 256;
+    Overlay->MinimumLevel = 0;
+    Overlay->MaximumLevel = 19;
     Overlay->bAutoActivate = true;
     Overlay->RegisterComponent();
     Tileset->AddInstanceComponent(Overlay);
