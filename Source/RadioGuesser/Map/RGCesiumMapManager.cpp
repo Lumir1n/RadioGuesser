@@ -8,7 +8,7 @@
 #include "EngineUtils.h"
 #include "CesiumGeoreference.h"
 #include "Cesium3DTileset.h"
-#include "CesiumWebMapTileServiceRasterOverlay.h"
+#include "CesiumUrlTemplateRasterOverlay.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
 {
@@ -188,17 +188,18 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
         return;
     }
 
-    // MapTiler Natural Earth — beautiful political map, no watermark, free tier
-    // URL template: https://api.maptiler.com/maps/natural-earth/{z}/{x}/{y}.png?key=KEY
+    // MapTiler Basic-v2 raster tiles — 256px XYZ endpoint returns actual PNG images
+    // The "256/" prefix is REQUIRED: without it, MapTiler returns a vector style JSON (not images)
+    // basic-v2 gives a clean, minimal look ideal for a guessing game (no clutter)
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/basic-v2/{z}/{x}/{y}.png?key=%s"),
+        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
         *MapTilerKey);
 
-    UCesiumWebMapTileServiceRasterOverlay* Overlay =
-        NewObject<UCesiumWebMapTileServiceRasterOverlay>(
+    UCesiumUrlTemplateRasterOverlay* Overlay =
+        NewObject<UCesiumUrlTemplateRasterOverlay>(
             Tileset,
-            UCesiumWebMapTileServiceRasterOverlay::StaticClass(),
+            UCesiumUrlTemplateRasterOverlay::StaticClass(),
             TEXT("MapTilerOverlay"));
 
     if (!Overlay)
@@ -207,12 +208,12 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
         return;
     }
 
-    Overlay->BaseUrl        = TileUrl;
-    Overlay->Layer          = TEXT("");
-    Overlay->Style          = TEXT("default");
-    Overlay->TileMatrixSetID = TEXT("GoogleMapsCompatible");
-    Overlay->Format         = TEXT("image/png");
-    Overlay->RegisterComponent();
+    Overlay->TemplateUrl = TileUrl;
 
-    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler Natural Earth overlay added."));
+    // RegisterComponent() automatically calls AddToTileset() on the parent tileset.
+    // AddInstanceComponent() makes the component visible in the editor outliner.
+    Overlay->RegisterComponent();
+    Tileset->AddInstanceComponent(Overlay);
+
+    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
 }
