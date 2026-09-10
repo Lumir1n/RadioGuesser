@@ -215,5 +215,9 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     Overlay->RegisterComponent();
     Tileset->AddInstanceComponent(Overlay);
 
+    // Force the tileset to reload with the new overlay applied.
+    // Without this, tiles already loaded before BeginPlay won't get the texture.
+    Tileset->RefreshTileset();
+
     UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
 }
