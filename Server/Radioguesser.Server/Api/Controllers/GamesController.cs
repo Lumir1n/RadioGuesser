@@ -1,8 +1,10 @@
 // Copyright RadioGuesser. All Rights Reserved.
 
 using Microsoft.AspNetCore.Mvc;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Npgsql;
 using Radioguesser.Server.Application.Interfaces;
 
 namespace Radioguesser.Server.Api.Controllers;
@@ -11,9 +13,10 @@ namespace Radioguesser.Server.Api.Controllers;
 [Route("api/v1/games")]
 public sealed class GamesController : ControllerBase
 {
-    private readonly IScoringService         _scoring;
-    private readonly IHttpClientFactory      _http;
-    private readonly IConfiguration          _cfg;
+    private readonly IScoringService          _scoring;
+    private readonly IHttpClientFactory       _http;
+    private readonly IConfiguration           _cfg;
+    private readonly NpgsqlDataSource         _db;
     private readonly ILogger<GamesController> _log;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -22,176 +25,171 @@ public sealed class GamesController : ControllerBase
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    public GamesController(
-        IScoringService          scoring,
-        IHttpClientFactory       http,
-        IConfiguration           cfg,
-        ILogger<GamesController> log)
-    {
-        _scoring = scoring;
-        _http    = http;
-        _cfg     = cfg;
-        _log     = log;
-    }
+    public GamesController(IScoringService s, IHttpClientFactory h, IConfiguration c, NpgsqlDataSource db, ILogger<GamesController> l)
+    { _scoring = s; _http = h; _cfg = c; _db = db; _log = l; }
 
-    // ── POST /api/v1/games/solo/round ─────────────────────────────────────────
-    // Returns a safe round descriptor. Station location is NEVER included.
+    // ─── POST /api/v1/games/solo/round ────────────────────────────────────────
 
     [HttpPost("solo/round")]
     public async Task<IActionResult> StartSoloRound(
-        [FromBody] StartRoundRequest req,
-        CancellationToken ct = default)
+        [FromBody] StartRoundRequest req, CancellationToken ct = default)
     {
-        // Get a random station with coordinates via Supabase RPC
-        var client = _http.CreateClient("Supabase");
-        var resp = await client.PostAsync("rest/v1/rpc/get_random_playable_station",
-            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"), ct);
-
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            _log.LogWarning("Supabase RPC failed: {Status}", resp.StatusCode);
-            return StatusCode(503, new { error = "No stations available" });
+            await using var conn = await OpenDbAsync(ct);
+
+            // Get random station with coordinates via direct SQL
+            string id = "", name = "", cc = "", country = "", streamUrl = "";
+            double lat = 0, lon = 0;
+
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    SELECT rs.id::text, rs.name, rs.country_code, rs.country,
+                           rs.lat, rs.lon,
+                           rst.stream_url
+                    FROM radio_stations rs
+                    JOIN radio_streams rst ON rst.station_id = rs.id AND rst.is_primary = true
+                    WHERE rs.is_active = true
+                      AND rs.lat IS NOT NULL
+                      AND rs.lon IS NOT NULL
+                      AND rs.health_status NOT IN (3, 4)
+                    ORDER BY RANDOM()
+                    LIMIT 1";
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                    return StatusCode(503, new { error = "No stations with coordinates. Import stations first." });
+
+                id = reader.GetString(0);  name    = reader.GetString(1);
+                cc = reader.GetString(2);  country = reader.GetString(3);
+                lat = reader.GetDouble(4); lon     = reader.GetDouble(5);
+                streamUrl = reader.GetString(6);
+            }
+
+            var token  = Guid.NewGuid().ToString("N");
+            var gameId = Guid.NewGuid();
+            var roundId = Guid.NewGuid();
+
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    INSERT INTO games (id, mode, status, total_rounds, seed, started_at)
+                    VALUES (@gid, 0, 1, @tr, @seed, NOW());
+                    INSERT INTO game_rounds (id, game_id, round_number, station_id, public_token,
+                                            stream_url, display_name, status, started_at, duration_seconds)
+                    VALUES (@rid, @gid, @rn, @sid::uuid, @token,
+                            @url, 'LIVE RADIO', 1, NOW(), 120);";
+                cmd.Parameters.AddWithValue("gid",  gameId);
+                cmd.Parameters.AddWithValue("rid",  roundId);
+                cmd.Parameters.AddWithValue("tr",   req.TotalRounds);
+                cmd.Parameters.AddWithValue("seed", Guid.NewGuid().ToString("N"));
+                cmd.Parameters.AddWithValue("rn",   req.RoundNumber);
+                cmd.Parameters.AddWithValue("sid",  id);
+                cmd.Parameters.AddWithValue("token", token);
+                cmd.Parameters.AddWithValue("url",  streamUrl);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            _log.LogInformation("Solo round {R}/{T} — {Name} ({CC}) stream={Url}",
+                req.RoundNumber, req.TotalRounds, name, cc, streamUrl);
+
+            return Ok(new { roundToken=token, streamUrl, displayName="LIVE RADIO",
+                            roundNumber=req.RoundNumber, totalRounds=req.TotalRounds, durationSeconds=120 });
         }
-
-        var json  = await resp.Content.ReadAsStringAsync(ct);
-        var rows  = JsonSerializer.Deserialize<List<SupabaseStationRow>>(json, JsonOpts) ?? [];
-
-        if (rows.Count == 0)
+        catch (Exception ex)
         {
-            return StatusCode(503, new { error = "No stations available. Import stations first." });
+            _log.LogError(ex, "StartSoloRound failed");
+            return StatusCode(500, new { error = ex.Message });
         }
-
-        var station = rows[0];
-
-        // Create a game + round record via Supabase insert
-        var gameId    = Guid.NewGuid().ToString();
-        var roundId   = Guid.NewGuid().ToString();
-        var token     = Guid.NewGuid().ToString("N");
-
-        // Insert game
-        await client.PostAsync("rest/v1/games",
-            JsonContent(new {
-                id = gameId, mode = 0, status = 1, total_rounds = req.TotalRounds,
-                seed = Guid.NewGuid().ToString("N"), started_at = DateTime.UtcNow
-            }), ct);
-
-        // Insert round — station_id and true location stored server-side only
-        await client.PostAsync("rest/v1/game_rounds",
-            JsonContent(new {
-                id = roundId, game_id = gameId,
-                round_number = req.RoundNumber, station_id = station.Id,
-                public_token = token, stream_url = station.StreamUrl,
-                display_name = "LIVE RADIO", status = 1,
-                started_at = DateTime.UtcNow, duration_seconds = 120
-            }), ct);
-
-        _log.LogInformation("Solo round {R}/{T} created — token={Token} station={Name} ({CC})",
-            req.RoundNumber, req.TotalRounds, token, station.Name, station.CountryCode);
-
-        return Ok(new
-        {
-            roundToken      = token,
-            streamUrl       = station.StreamUrl,
-            displayName     = "LIVE RADIO",
-            roundNumber     = req.RoundNumber,
-            totalRounds     = req.TotalRounds,
-            durationSeconds = 120,
-            // Station location intentionally absent
-        });
     }
 
-    // ── POST /api/v1/games/solo/guess ─────────────────────────────────────────
+    // ─── POST /api/v1/games/solo/guess ────────────────────────────────────────
 
     [HttpPost("solo/guess")]
     public async Task<IActionResult> SubmitSoloGuess(
-        [FromBody] SubmitGuessRequest req,
-        CancellationToken ct = default)
+        [FromBody] SubmitGuessRequest req, CancellationToken ct = default)
     {
-        if (req.Latitude < -90 || req.Latitude > 90 ||
-            req.Longitude < -180 || req.Longitude > 180)
-        {
+        if (req.Latitude < -90 || req.Latitude > 90 || req.Longitude < -180 || req.Longitude > 180)
             return BadRequest(new { error = "Invalid coordinates" });
-        }
 
-        // Call process_solo_guess RPC — does PostGIS distance calc + persists result
-        var client = _http.CreateClient("Supabase");
-        var resp = await client.PostAsync("rest/v1/rpc/process_solo_guess",
-            JsonContent(new {
-                p_round_token = req.RoundToken,
-                p_guess_lat   = req.Latitude,
-                p_guess_lon   = req.Longitude,
-            }), ct);
-
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var err = await resp.Content.ReadAsStringAsync(ct);
-            _log.LogWarning("process_solo_guess failed: {Status} {Body}", resp.StatusCode, err);
-            return StatusCode(500, new { error = "Could not process guess" });
+            await using var conn = await OpenDbAsync(ct);
+
+            // Get station coords via PostGIS distance in one query
+            double actualLat=0, actualLon=0, distanceM=0;
+            int score=0;
+            string stationName="", country="";
+            Guid roundId = Guid.Empty;
+
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    SELECT gr.id,
+                           rs.lat, rs.lon,
+                           rs.name, rs.country,
+                           ST_Distance(
+                               ST_SetSRID(ST_MakePoint(@lon, @lat), 4326)::geography,
+                               rs.location::geography
+                           ) AS dist_m
+                    FROM game_rounds gr
+                    JOIN radio_stations rs ON rs.id = gr.station_id
+                    WHERE gr.public_token = @token AND gr.status = 1
+                    LIMIT 1";
+                cmd.Parameters.AddWithValue("token", req.RoundToken);
+                cmd.Parameters.AddWithValue("lat",   req.Latitude);
+                cmd.Parameters.AddWithValue("lon",   req.Longitude);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                    return NotFound(new { error = "Round not found or already completed" });
+
+                roundId      = reader.GetGuid(0);
+                actualLat    = reader.GetDouble(1);
+                actualLon    = reader.GetDouble(2);
+                stationName  = reader.GetString(3);
+                country      = reader.GetString(4);
+                distanceM    = reader.GetDouble(5);
+                score        = _scoring.CalculateScore(distanceM);
+            }
+
+            // Persist and close
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    INSERT INTO player_guesses (round_id, player_id, distance_metres, score, is_locked, submitted_at)
+                    VALUES (@rid, '00000000-0000-0000-0000-000000000000'::uuid, @dist, @score, true, NOW());
+                    UPDATE game_rounds SET status = 2, ended_at = NOW() WHERE id = @rid;";
+                cmd.Parameters.AddWithValue("rid",   roundId);
+                cmd.Parameters.AddWithValue("dist",  distanceM);
+                cmd.Parameters.AddWithValue("score", score);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            _log.LogInformation("Guess — {Dist:F1}km score={Score} station={Name}", distanceM/1000, score, stationName);
+
+            return Ok(new {
+                guessLat=req.Latitude, guessLon=req.Longitude,
+                actualLat, actualLon,
+                distanceKm=distanceM/1000.0, score, maxScore=_scoring.MaxScore,
+                stationName, country });
         }
-
-        var json  = await resp.Content.ReadAsStringAsync(ct);
-        var rows  = JsonSerializer.Deserialize<List<GuessResultRow>>(json, JsonOpts) ?? [];
-
-        if (rows.Count == 0)
-            return NotFound(new { error = "Round not found or already completed" });
-
-        var r = rows[0];
-
-        _log.LogInformation("Solo guess — distance={Dist:F1}km score={Score}",
-            r.DistanceKm, r.Score);
-
-        return Ok(new
+        catch (Exception ex)
         {
-            guessLat    = r.GuessLat,
-            guessLon    = r.GuessLon,
-            actualLat   = r.ActualLat,
-            actualLon   = r.ActualLon,
-            distanceKm  = r.DistanceKm,
-            score       = r.Score,
-            maxScore    = r.MaxScore,
-            stationName = r.StationName,
-            country     = r.Country,
-        });
+            _log.LogError(ex, "SubmitSoloGuess failed");
+            return StatusCode(500, new { error = ex.Message });
+        }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    private static HttpContent JsonContent(object obj) =>
-        new StringContent(
-            JsonSerializer.Serialize(obj),
-            System.Text.Encoding.UTF8,
-            "application/json");
+    private async Task<NpgsqlConnection> OpenDbAsync(CancellationToken ct)
+        => await _db.OpenConnectionAsync(ct);
 
-    // ── DTOs ──────────────────────────────────────────────────────────────────
-
-    private sealed class SupabaseStationRow
-    {
-        [JsonPropertyName("id")]          public string Id          { get; set; } = "";
-        [JsonPropertyName("name")]        public string Name        { get; set; } = "";
-        [JsonPropertyName("country_code")]public string CountryCode { get; set; } = "";
-        [JsonPropertyName("country")]     public string Country     { get; set; } = "";
-        [JsonPropertyName("stream_url")]  public string StreamUrl   { get; set; } = "";
-        [JsonPropertyName("codec")]       public string Codec       { get; set; } = "";
-        [JsonPropertyName("bitrate")]     public int    Bitrate     { get; set; }
-        [JsonPropertyName("lat")]         public double Lat         { get; set; }
-        [JsonPropertyName("lon")]         public double Lon         { get; set; }
-    }
-
-    private sealed class GuessResultRow
-    {
-        [JsonPropertyName("guess_lat")]    public double GuessLat    { get; set; }
-        [JsonPropertyName("guess_lon")]    public double GuessLon    { get; set; }
-        [JsonPropertyName("actual_lat")]   public double ActualLat   { get; set; }
-        [JsonPropertyName("actual_lon")]   public double ActualLon   { get; set; }
-        [JsonPropertyName("distance_km")]  public double DistanceKm  { get; set; }
-        [JsonPropertyName("score")]        public int    Score       { get; set; }
-        [JsonPropertyName("max_score")]    public int    MaxScore    { get; set; }
-        [JsonPropertyName("station_name")] public string StationName { get; set; } = "";
-        [JsonPropertyName("country")]      public string Country     { get; set; } = "";
-    }
+    private static StringContent Json(object o) =>
+        new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");
 }
-
-// ── Request DTOs ──────────────────────────────────────────────────────────────
 
 public record StartRoundRequest(int RoundNumber = 1, int TotalRounds = 5);
 public record SubmitGuessRequest(string RoundToken, double Latitude, double Longitude);
