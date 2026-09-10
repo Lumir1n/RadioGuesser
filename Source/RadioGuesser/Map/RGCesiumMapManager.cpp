@@ -214,7 +214,7 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     //    instead of PNG images, which Cesium cannot render.
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{reverseY}.png?key=%s"),
+        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
         *MapTilerKey);
 
     UCesiumUrlTemplateRasterOverlay* Overlay =

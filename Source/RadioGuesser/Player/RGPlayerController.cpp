@@ -27,13 +27,12 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // Allow mouse cursor to stay visible and not get captured by the game.
-    // FInputModeGameAndUI: input goes to both game AND UI, cursor stays visible,
-    // clicking in the viewport doesn't lock/hide the mouse.
+    // Use GameOnly input mode so UE captures the viewport focus on click
+    // (same behavior as a standalone game). bShowMouseCursor = true keeps
+    // the cursor visible for map interaction while still routing input
+    // correctly through the game's input system.
     {
-        FInputModeGameAndUI Mode;
-        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-        Mode.SetHideCursorDuringCapture(false);
+        FInputModeGameOnly Mode;
         SetInputMode(Mode);
         bShowMouseCursor = true;
     }
