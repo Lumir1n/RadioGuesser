@@ -11,13 +11,21 @@ void URGBackendSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
 
-    // Read base URL from config: [RadioGuesser] BackendUrl=https://...
-    GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendUrl"), BaseUrl, GGameIni);
-    if (BaseUrl.IsEmpty())
+    // Read URL parts from config — ini parser strips double-slashes from values
+    // so we store host and protocol separately
+    FString Host, Protocol;
+    if (GConfig)
     {
-        BaseUrl = TEXT("http://localhost:5000");
-        UE_LOG(LogRGAPI, Warning, TEXT("BackendUrl not set in config; defaulting to %s"), *BaseUrl);
+        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendUrl"),      Host,     GGameIni);
+        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendProtocol"), Protocol, GGameIni);
     }
+
+    if (Host.IsEmpty())     { Host     = TEXT("localhost:5296"); }
+    if (Protocol.IsEmpty()) { Protocol = TEXT("http"); }
+
+    // Reconstruct full URL
+    BaseUrl = Protocol + TEXT("://") + Host;
+
     UE_LOG(LogRGAPI, Log, TEXT("RGBackendSubsystem initialised — BaseUrl=%s"), *BaseUrl);
 }
 
