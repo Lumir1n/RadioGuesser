@@ -11,24 +11,9 @@ void URGBackendSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
 
-    // Hardcode the URL directly — avoids ini parser stripping double-slashes
-    // Change this value here when deploying to production
+    // URL hardcoded — Unreal ini parser strips double-slashes from values
+    // Change this value to point to your production server
     BaseUrl = TEXT("http://localhost:5296");
-
-    // Optionally override from config if a clean non-slash value is present
-    FString ConfigUrl;
-    if (GConfig)
-    {
-        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendUrl"), ConfigUrl, GGameIni);
-        // Only use config value if it looks like a complete URL (starts with http)
-        if (ConfigUrl.StartsWith(TEXT("http://")) || ConfigUrl.StartsWith(TEXT("https://")))
-        {
-            BaseUrl = ConfigUrl;
-        }
-    }
-
-    // Strip any trailing slash
-    BaseUrl = BaseUrl.TrimEnd('/');
 
     UE_LOG(LogRGAPI, Log, TEXT("RGBackendSubsystem initialised — BaseUrl=%s"), *BaseUrl);
 }

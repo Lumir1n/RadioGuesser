@@ -7,8 +7,10 @@
 #include "Map/RGMapSubsystem.h"
 #include "RGCesiumMapManager.generated.h"
 
-// Forward declaration only — full header included in .cpp
+// Forward declarations
 class ACesiumGeoreference;
+class ACesium3DTileset;
+class UCesiumWebMapTileServiceRasterOverlay;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMapClick,
     FRGGeoCoordinate, Coordinate,
@@ -77,4 +79,6 @@ public:
 private:
     UFUNCTION() void OnGuessPlaced(FRGGeoCoordinate Coordinate);
     UFUNCTION() void OnGuessResult(FRGGuessResult   Result);
+
+    void AddMapTilerOverlay();
 };

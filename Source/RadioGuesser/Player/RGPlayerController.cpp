@@ -26,6 +26,32 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
+    // Auto-load input assets if not assigned in Blueprint defaults
+    if (!DefaultMappingContext)
+    {
+        DefaultMappingContext = LoadObject<UInputMappingContext>(
+            nullptr, TEXT("/Game/Input/IMC_RadioGuesser.IMC_RadioGuesser"));
+    }
+    if (!MapClickAction)
+    {
+        MapClickAction = LoadObject<UInputAction>(
+            nullptr, TEXT("/Game/Input/IA_MapClick.IA_MapClick"));
+    }
+    if (!ConfirmGuessAction)
+    {
+        ConfirmGuessAction = LoadObject<UInputAction>(
+            nullptr, TEXT("/Game/Input/IA_ConfirmGuess.IA_ConfirmGuess"));
+    }
+
+    if (!DefaultMappingContext)
+    {
+        UE_LOG(LogMatch, Warning, TEXT("ARGPlayerController: IMC_RadioGuesser not found!"));
+    }
+    if (!MapClickAction)
+    {
+        UE_LOG(LogMatch, Warning, TEXT("ARGPlayerController: IA_MapClick not found!"));
+    }
+
     // Cache map manager reference once at begin play
     for (TActorIterator<ARGCesiumMapManager> It(GetWorld()); It; ++It)
     {
@@ -42,11 +68,11 @@ void ARGPlayerController::BeginPlay()
             if (DefaultMappingContext)
             {
                 Sys->AddMappingContext(DefaultMappingContext, 0);
+                UE_LOG(LogMatch, Log, TEXT("ARGPlayerController: Input mapping context added."));
             }
             else
             {
-                UE_LOG(LogMatch, Warning, TEXT("ARGPlayerController: DefaultMappingContext not set. "
-                    "Assign IMC_RadioGuesser in BP_RGPlayerController defaults."));
+                UE_LOG(LogMatch, Warning, TEXT("ARGPlayerController: DefaultMappingContext not set."));
             }
         }
     }

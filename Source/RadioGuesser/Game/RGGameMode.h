@@ -4,6 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "UI/RGGameHUDWidget.h"
+#include "UI/RGRoundResultWidget.h"
+#include "Match/RGMatchSubsystem.h"
+#include "Player/RGGlobePawn.h"
 #include "RGGameMode.generated.h"
 
 UENUM(BlueprintType)
@@ -54,10 +58,33 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Game Config")
     float RoundDurationSeconds = 120.0f;
 
+    /**
+     * Widget class to use for the in-game HUD.
+     * Set this in BP_RGGameMode defaults to WBP_GameHUD.
+     * If not set, the game mode will try to find WBP_GameHUD automatically.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
+    TSubclassOf<URGGameHUDWidget> HUDWidgetClass;
+
+    /**
+     * Widget class for the round result screen.
+     * Auto-loaded from WBP_RoundResult if not set.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
+    TSubclassOf<URGRoundResultWidget> ResultWidgetClass;
+
 protected:
     virtual void BeginPlay() override;
     void SetGamePhase(ERGGamePhase NewPhase);
+    void CreateHUDWidget();
+    void CreateResultWidget();
 
-    UPROPERTY(BlueprintReadOnly) ERGGamePhase CurrentPhase  = ERGGamePhase::WaitingToStart;
-    UPROPERTY(BlueprintReadOnly) int32        CurrentRound  = 0;
+    UFUNCTION() void HandleRoundResultReady(FRGGuessResult Result);
+    UFUNCTION() void HandleMatchCompleted();
+    UFUNCTION() void HandleMatchStateChanged(ERGMatchState NewState);
+
+    UPROPERTY(BlueprintReadOnly) ERGGamePhase      CurrentPhase  = ERGGamePhase::WaitingToStart;
+    UPROPERTY(BlueprintReadOnly) int32             CurrentRound  = 0;
+    UPROPERTY(BlueprintReadOnly) URGGameHUDWidget*    HUDWidget    = nullptr;
+    UPROPERTY(BlueprintReadOnly) URGRoundResultWidget* ResultWidget = nullptr;
 };

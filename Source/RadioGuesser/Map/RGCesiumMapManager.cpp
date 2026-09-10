@@ -7,6 +7,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "CesiumGeoreference.h"
+#include "Cesium3DTileset.h"
+#include "CesiumWebMapTileServiceRasterOverlay.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
 {
@@ -55,6 +57,10 @@ void ARGCesiumMapManager::BeginPlay()
             MapSub->OnGuessResult.AddDynamic(this, &ARGCesiumMapManager::OnGuessResult);
         }
     }
+
+    // Add MapTiler Natural Earth overlay to Cesium World Terrain
+    // This replaces Bing Maps and has no watermark on the tiles themselves
+    AddMapTilerOverlay();
 }
 
 // ─── Coordinate conversion ────────────────────────────────────────────────────
@@ -162,4 +168,51 @@ void ARGCesiumMapManager::OnGuessPlaced(FRGGeoCoordinate Coordinate)
 void ARGCesiumMapManager::OnGuessResult(FRGGuessResult Result)
 {
     ShowRoundResult(Result.PlayerGuess, Result.ActualLocation);
+}
+
+// ─── MapTiler overlay ─────────────────────────────────────────────────────────
+
+void ARGCesiumMapManager::AddMapTilerOverlay()
+{
+    // Find Cesium World Terrain tileset in the level
+    ACesium3DTileset* Tileset = nullptr;
+    for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+    {
+        Tileset = *It;
+        break;
+    }
+
+    if (!Tileset)
+    {
+        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: No ACesium3DTileset found in level."));
+        return;
+    }
+
+    // MapTiler Natural Earth — beautiful political map, no watermark, free tier
+    // URL template: https://api.maptiler.com/maps/natural-earth/{z}/{x}/{y}.png?key=KEY
+    const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
+    const FString TileUrl = FString::Printf(
+        TEXT("https://api.maptiler.com/maps/basic-v2/{z}/{x}/{y}.png?key=%s"),
+        *MapTilerKey);
+
+    UCesiumWebMapTileServiceRasterOverlay* Overlay =
+        NewObject<UCesiumWebMapTileServiceRasterOverlay>(
+            Tileset,
+            UCesiumWebMapTileServiceRasterOverlay::StaticClass(),
+            TEXT("MapTilerOverlay"));
+
+    if (!Overlay)
+    {
+        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: Failed to create overlay object."));
+        return;
+    }
+
+    Overlay->BaseUrl        = TileUrl;
+    Overlay->Layer          = TEXT("");
+    Overlay->Style          = TEXT("default");
+    Overlay->TileMatrixSetID = TEXT("GoogleMapsCompatible");
+    Overlay->Format         = TEXT("image/png");
+    Overlay->RegisterComponent();
+
+    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler Natural Earth overlay added."));
 }
