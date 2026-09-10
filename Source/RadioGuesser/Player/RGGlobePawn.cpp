@@ -117,15 +117,18 @@ void ARGGlobePawn::Tick(float DeltaTime)
             SpringArm->TargetArmLength, CurrentArmLength, DeltaTime, 8.0f);
     }
 
-    // Apply rotation while dragging
+    // Apply rotation while dragging — this pans the map by rotating the
+    // spring arm pivot. From a top-down perspective this feels like dragging
+    // the map underneath the camera (pan), not orbiting a globe.
     if (bIsDragging && !LastMouseDelta.IsNearlyZero())
     {
         const FRotator CurrentRot = SpringArm->GetRelativeRotation();
 
+        // Invert X so dragging right moves the map right (natural pan feel)
+        float NewYaw   = CurrentRot.Yaw   - LastMouseDelta.X * RotationSpeed;
         float NewPitch = FMath::Clamp(
-            CurrentRot.Pitch - LastMouseDelta.Y * RotationSpeed,
+            CurrentRot.Pitch + LastMouseDelta.Y * RotationSpeed,
             -89.0f, -15.0f);
-        float NewYaw   = CurrentRot.Yaw + LastMouseDelta.X * RotationSpeed;
 
         SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
         LastMouseDelta = FVector2D::ZeroVector;

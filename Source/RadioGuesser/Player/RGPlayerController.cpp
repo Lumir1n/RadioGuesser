@@ -13,6 +13,7 @@
 #include "InputMappingContext.h"
 #include "InputAction.h"
 #include "Engine/EngineTypes.h"
+#include "Framework/Application/SlateApplication.h"
 
 ARGPlayerController::ARGPlayerController()
 {
@@ -25,6 +26,17 @@ void ARGPlayerController::BeginPlay()
 {
     Super::BeginPlay();
     bGuessSubmitted = false;
+
+    // Allow mouse cursor to stay visible and not get captured by the game.
+    // FInputModeGameAndUI: input goes to both game AND UI, cursor stays visible,
+    // clicking in the viewport doesn't lock/hide the mouse.
+    {
+        FInputModeGameAndUI Mode;
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        Mode.SetHideCursorDuringCapture(false);
+        SetInputMode(Mode);
+        bShowMouseCursor = true;
+    }
 
     // Auto-load input assets if not assigned in Blueprint defaults
     if (!DefaultMappingContext)
