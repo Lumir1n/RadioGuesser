@@ -11,20 +11,24 @@ void URGBackendSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
 
-    // Read URL parts from config — ini parser strips double-slashes from values
-    // so we store host and protocol separately
-    FString Host, Protocol;
+    // Hardcode the URL directly — avoids ini parser stripping double-slashes
+    // Change this value here when deploying to production
+    BaseUrl = TEXT("http://localhost:5296");
+
+    // Optionally override from config if a clean non-slash value is present
+    FString ConfigUrl;
     if (GConfig)
     {
-        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendUrl"),      Host,     GGameIni);
-        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendProtocol"), Protocol, GGameIni);
+        GConfig->GetString(TEXT("RadioGuesser"), TEXT("BackendUrl"), ConfigUrl, GGameIni);
+        // Only use config value if it looks like a complete URL (starts with http)
+        if (ConfigUrl.StartsWith(TEXT("http://")) || ConfigUrl.StartsWith(TEXT("https://")))
+        {
+            BaseUrl = ConfigUrl;
+        }
     }
 
-    if (Host.IsEmpty())     { Host     = TEXT("localhost:5296"); }
-    if (Protocol.IsEmpty()) { Protocol = TEXT("http"); }
-
-    // Reconstruct full URL
-    BaseUrl = Protocol + TEXT("://") + Host;
+    // Strip any trailing slash
+    BaseUrl = BaseUrl.TrimEnd('/');
 
     UE_LOG(LogRGAPI, Log, TEXT("RGBackendSubsystem initialised — BaseUrl=%s"), *BaseUrl);
 }
@@ -35,15 +39,8 @@ void URGBackendSubsystem::Deinitialize()
     Super::Deinitialize();
 }
 
-void URGBackendSubsystem::SetBaseUrl(const FString& Url)
-{
-    BaseUrl = Url;
-}
-
-void URGBackendSubsystem::SetAuthToken(const FString& Token)
-{
-    AuthToken = Token;
-}
+void URGBackendSubsystem::SetBaseUrl(const FString& Url)    { BaseUrl   = Url; }
+void URGBackendSubsystem::SetAuthToken(const FString& Token) { AuthToken = Token; }
 
 void URGBackendSubsystem::GetAsync(const FString& Endpoint, FOnHttpResponse Callback)
 {
@@ -82,9 +79,7 @@ void URGBackendSubsystem::SendRequest(const FString& Verb,
     Request->OnProcessRequestComplete().BindLambda(
         [Callback](FHttpRequestPtr /*Req*/, FHttpResponsePtr Resp, bool bConnected)
         {
-            // IsBound() checks the object pointer for BindUObject delegates
             if (!Callback.IsBound()) return;
-
             const bool    bSuccess     = bConnected && Resp.IsValid() && Resp->GetResponseCode() < 400;
             const FString ResponseBody = Resp.IsValid() ? Resp->GetContentAsString() : FString();
             Callback.ExecuteIfBound(bSuccess, ResponseBody);
