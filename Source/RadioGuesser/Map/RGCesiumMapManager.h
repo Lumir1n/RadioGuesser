@@ -10,6 +10,7 @@
 // Forward declarations
 class ACesiumGeoreference;
 class ACesium3DTileset;
+class UCesiumRasterOverlay;
 class UCesiumUrlTemplateRasterOverlay;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMapClick,

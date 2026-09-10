@@ -8,6 +8,7 @@
 #include "EngineUtils.h"
 #include "CesiumGeoreference.h"
 #include "Cesium3DTileset.h"
+#include "CesiumRasterOverlay.h"
 #include "CesiumUrlTemplateRasterOverlay.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
@@ -188,9 +189,29 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
         return;
     }
 
-    // MapTiler Basic-v2 raster tiles — 256px XYZ endpoint returns actual PNG images
-    // The "256/" prefix is REQUIRED: without it, MapTiler returns a vector style JSON (not images)
-    // basic-v2 gives a clean, minimal look ideal for a guessing game (no clutter)
+    // ── Step 1: Remove ALL existing raster overlay components from the tileset.
+    //    This kills the Bing Maps overlay (and any others) that were saved in
+    //    the .umap file. Without this step they fire "Could not parse web map
+    //    service XML" on every load and the Bing Maps watermark stays visible.
+    {
+        TArray<UCesiumRasterOverlay*> ExistingOverlays;
+        Tileset->GetComponents<UCesiumRasterOverlay>(ExistingOverlays);
+
+        for (UCesiumRasterOverlay* OldOverlay : ExistingOverlays)
+        {
+            UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Removing old overlay '%s'"),
+                *OldOverlay->GetName());
+            OldOverlay->Deactivate();
+            OldOverlay->DestroyComponent();
+        }
+        UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Removed %d existing overlay(s)"),
+            ExistingOverlays.Num());
+    }
+
+    // ── Step 2: Add MapTiler Basic-v2 raster tiles.
+    //    URL format: /maps/{style}/256/{z}/{x}/{y}.png — the 256/ prefix is
+    //    mandatory. Without it MapTiler returns a vector style JSON document
+    //    instead of PNG images, which Cesium cannot render.
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
         TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
@@ -210,13 +231,15 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
     Overlay->TemplateUrl = TileUrl;
 
-    // RegisterComponent() automatically calls AddToTileset() on the parent tileset.
-    // AddInstanceComponent() makes the component visible in the editor outliner.
+    // Activate BEFORE RegisterComponent so the overlay is added to the tileset
+    // in the correct order. RegisterComponent calls OnRegister which calls
+    // Activate internally, but setting bAutoActivate = true first ensures it.
+    Overlay->bAutoActivate = true;
     Overlay->RegisterComponent();
     Tileset->AddInstanceComponent(Overlay);
 
-    // Force the tileset to reload with the new overlay applied.
-    // Without this, tiles already loaded before BeginPlay won't get the texture.
+    // Force the tileset to reload so newly added overlay is applied to all
+    // tiles that were already loaded before BeginPlay ran.
     Tileset->RefreshTileset();
 
     UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
