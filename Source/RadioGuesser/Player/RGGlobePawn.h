@@ -83,7 +83,7 @@ private:
 
     bool   bIsDragging      = false;
     float  TotalDragPixels  = 0.0f;
-    float  CurrentArmLength = 2000000.0f;
+    float  CurrentArmLength = 1800000.0f;
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
 };

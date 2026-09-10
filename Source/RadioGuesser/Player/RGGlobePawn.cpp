@@ -49,8 +49,9 @@ void ARGGlobePawn::BeginPlay()
     // Set initial arm length
     SpringArm->TargetArmLength = CurrentArmLength;
 
-    // Set initial camera angle looking down at globe
-    SpringArm->SetRelativeRotation(FRotator(-45.0f, 0.0f, 0.0f));
+    // Set initial camera angle — top-down view like GeoGuessr globe:
+    // Pitch -70 = mostly top-down with slight angle to show globe curvature
+    SpringArm->SetRelativeRotation(FRotator(-70.0f, 0.0f, 0.0f));
 
     // Auto-build a simple Input Mapping Context for globe camera controls
     // We create standalone actions so we don't conflict with the game IMC
@@ -123,7 +124,7 @@ void ARGGlobePawn::Tick(float DeltaTime)
 
         float NewPitch = FMath::Clamp(
             CurrentRot.Pitch - LastMouseDelta.Y * RotationSpeed,
-            -89.0f, -5.0f);
+            -89.0f, -15.0f);
         float NewYaw   = CurrentRot.Yaw + LastMouseDelta.X * RotationSpeed;
 
         SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
