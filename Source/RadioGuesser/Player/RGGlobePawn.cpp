@@ -57,35 +57,36 @@ void ARGGlobePawn::BeginPlay()
     // We create standalone actions so we don't conflict with the game IMC
     MappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Globe"));
 
+    // Drag: Boolean fires Started on press, Completed on release — correct
     IA_Drag   = NewObject<UInputAction>(this, TEXT("IA_GlobeDrag"));
     IA_Drag->ValueType = EInputActionValueType::Boolean;
 
+    // Zoom: 1D axis from mouse wheel
     IA_Zoom   = NewObject<UInputAction>(this, TEXT("IA_GlobeZoom"));
     IA_Zoom->ValueType = EInputActionValueType::Axis1D;
 
+    // Mouse delta: 2D axis, fires every frame the mouse moves
     IA_MouseXY = NewObject<UInputAction>(this, TEXT("IA_GlobeMouseXY"));
     IA_MouseXY->ValueType = EInputActionValueType::Axis2D;
 
-    // Map Left Mouse Button to drag
-    FEnhancedActionKeyMapping DragMapping;
-    DragMapping.Action = IA_Drag;
-    DragMapping.Key    = EKeys::LeftMouseButton;
+    // Left mouse button → drag toggle
     MappingContext->MapKey(IA_Drag,    EKeys::LeftMouseButton);
-
-    // Map mouse wheel to zoom
+    // Mouse wheel → zoom
     MappingContext->MapKey(IA_Zoom,    EKeys::MouseWheelAxis);
-
-    // Map mouse XY to delta
+    // Mouse movement → delta (always captured, we gate on bIsDragging in Tick)
     MappingContext->MapKey(IA_MouseXY, EKeys::Mouse2D);
 
-    // Register the context with lower priority than game IMC (priority 1)
+    // Priority 0 — same as game IMC so globe controls always respond.
+    // (In Enhanced Input, higher number = higher priority, so 0 is the base level.
+    //  We use 0 here and let the game IMC also sit at 0; they don't conflict
+    //  because they bind different actions.)
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
         if (ULocalPlayer* LP = PC->GetLocalPlayer())
         {
             if (auto* Sys = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP))
             {
-                Sys->AddMappingContext(MappingContext, 1);
+                Sys->AddMappingContext(MappingContext, 0);
             }
         }
     }

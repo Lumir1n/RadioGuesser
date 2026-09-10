@@ -27,12 +27,16 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // Use GameOnly input mode so UE captures the viewport focus on click
-    // (same behavior as a standalone game). bShowMouseCursor = true keeps
-    // the cursor visible for map interaction while still routing input
-    // correctly through the game's input system.
+    // GameAndUI with LockAlways:
+    //   - Viewport is permanently captured (no click-to-focus needed)
+    //   - Mouse cursor stays visible for map interaction
+    //   - All mouse/keyboard input is routed through the game input system
+    // This is the correct mode when you need a visible cursor that also
+    // controls the game (GeoGuessr-style map clicking).
     {
-        FInputModeGameOnly Mode;
+        FInputModeGameAndUI Mode;
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
+        Mode.SetHideCursorDuringCapture(false);
         SetInputMode(Mode);
         bShowMouseCursor = true;
     }
