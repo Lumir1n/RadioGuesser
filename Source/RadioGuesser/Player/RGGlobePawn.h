@@ -61,7 +61,7 @@ protected:
 
     /** Скорость пана мышью: смещение = delta_mouse * arm_length * PanScale */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PanScale = 0.0005f;
+    float PanScale = 0.003f;
 
     /** Скорость zoom колёсиком (см за тик колёсика) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
@@ -77,7 +77,7 @@ protected:
 
     /** Скорость WASD (доля arm_length за тик) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float KeyboardPanSpeed = 0.3f;
+    float KeyboardPanSpeed = 2.0f;
 
     /** Устаревшее, оставлено для совместимости */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")

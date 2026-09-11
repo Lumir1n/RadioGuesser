@@ -139,8 +139,11 @@ void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
 void ARGGlobePawn::OnZoom(const FInputActionValue& Value)
 {
     const float Axis = Value.Get<float>();
+    // Логарифмический zoom: скорость пропорциональна текущей высоте.
+    // Одно деление колёсика = 15% от текущей высоты.
+    const float ZoomDelta = CurrentArmLength * 0.15f * Axis;
     CurrentArmLength = FMath::Clamp(
-        CurrentArmLength - Axis * ZoomSpeed,
+        CurrentArmLength - ZoomDelta,
         MinArmLength,
         MaxArmLength);
 }

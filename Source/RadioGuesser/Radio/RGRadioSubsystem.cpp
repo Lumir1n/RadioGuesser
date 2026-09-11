@@ -61,6 +61,10 @@ void URGRadioSubsystem::OpenStream(const FRGRadioStreamInfo& StreamInfo)
     UE_LOG(LogRadio, Log, TEXT("OpenStream: %s"), *StreamInfo.DisplayName);
     SetPlaybackState(ERGRadioPlaybackState::Connecting);
 
+    // Close any previous session first — prevents ElectraPlayer from
+    // attempting video decoder init on the residual open connection.
+    MediaPlayer->Close();
+
     StreamMediaSource->StreamUrl = StreamInfo.StreamUrl;
     MediaPlayer->OpenSource(StreamMediaSource);
     // MediaPlayer will fire OnMediaOpened → HandleMediaOpened → state = Playing
