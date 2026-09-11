@@ -22,13 +22,13 @@ ARGGlobePawn::ARGGlobePawn()
 
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(GlobeRoot);
-    SpringArm->TargetArmLength            = CurrentArmLength;
-    SpringArm->bDoCollisionTest           = false;
-    SpringArm->bEnableCameraLag           = true;
-    SpringArm->CameraLagSpeed             = 8.0f;
-    SpringArm->bInheritPitch              = true;
-    SpringArm->bInheritYaw                = true;
-    SpringArm->bInheritRoll               = false;
+    SpringArm->TargetArmLength  = CurrentArmLength;
+    SpringArm->bDoCollisionTest = false;
+    SpringArm->bEnableCameraLag = true;
+    SpringArm->CameraLagSpeed   = 8.0f;
+    SpringArm->bInheritPitch    = true;
+    SpringArm->bInheritYaw      = true;
+    SpringArm->bInheritRoll     = false;
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
@@ -37,46 +37,35 @@ ARGGlobePawn::ARGGlobePawn()
     bUseControllerRotationPitch = false;
     bUseControllerRotationYaw   = false;
     bUseControllerRotationRoll  = false;
+
+    // Create input assets in constructor — they MUST exist when
+    // SetupPlayerInputComponent runs (which is called before BeginPlay).
+    MappingContext = CreateDefaultSubobject<UInputMappingContext>(TEXT("IMC_Globe"));
+
+    IA_Drag    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeDrag"));
+    IA_Drag->ValueType = EInputActionValueType::Boolean;
+
+    IA_Zoom    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeZoom"));
+    IA_Zoom->ValueType = EInputActionValueType::Axis1D;
+
+    IA_MouseXY = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeMouseXY"));
+    IA_MouseXY->ValueType = EInputActionValueType::Axis2D;
+
+    // Map keys once at CDO time
+    MappingContext->MapKey(IA_Drag,    EKeys::LeftMouseButton);
+    MappingContext->MapKey(IA_Zoom,    EKeys::MouseWheelAxis);
+    MappingContext->MapKey(IA_MouseXY, EKeys::Mouse2D);
 }
 
 void ARGGlobePawn::BeginPlay()
 {
     Super::BeginPlay();
 
-    // Position pawn at globe center (origin)
     SetActorLocation(FVector::ZeroVector);
-
-    // Set initial arm length
     SpringArm->TargetArmLength = CurrentArmLength;
-
-    // Set initial camera angle — top-down view like GeoGuessr globe:
-    // Pitch -70 = mostly top-down with slight angle to show globe curvature
     SpringArm->SetRelativeRotation(FRotator(-70.0f, 0.0f, 0.0f));
 
-    // Auto-build a simple Input Mapping Context for globe camera controls
-    // We create standalone actions so we don't conflict with the game IMC
-    MappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Globe"));
-
-    // LMB drag — Boolean fires Started on press, Completed on release
-    IA_Drag   = NewObject<UInputAction>(this, TEXT("IA_GlobeDrag"));
-    IA_Drag->ValueType = EInputActionValueType::Boolean;
-
-    // Zoom: 1D axis from mouse wheel
-    IA_Zoom   = NewObject<UInputAction>(this, TEXT("IA_GlobeZoom"));
-    IA_Zoom->ValueType = EInputActionValueType::Axis1D;
-
-    // Mouse delta: 2D axis, fires every frame the mouse moves
-    IA_MouseXY = NewObject<UInputAction>(this, TEXT("IA_GlobeMouseXY"));
-    IA_MouseXY->ValueType = EInputActionValueType::Axis2D;
-
-    MappingContext->MapKey(IA_Drag,    EKeys::LeftMouseButton);
-    MappingContext->MapKey(IA_Zoom,    EKeys::MouseWheelAxis);
-    MappingContext->MapKey(IA_MouseXY, EKeys::Mouse2D);
-
-    // Priority 0 — same as game IMC so globe controls always respond.
-    // (In Enhanced Input, higher number = higher priority, so 0 is the base level.
-    //  We use 0 here and let the game IMC also sit at 0; they don't conflict
-    //  because they bind different actions.)
+    // Register IMC with the Enhanced Input subsystem
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
         if (ULocalPlayer* LP = PC->GetLocalPlayer())
@@ -95,12 +84,16 @@ void ARGGlobePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 
     if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
     {
-        EIC->BindAction(IA_Drag,    ETriggerEvent::Started,    this, &ARGGlobePawn::OnDragStarted);
-        EIC->BindAction(IA_Drag,    ETriggerEvent::Completed,  this, &ARGGlobePawn::OnDragStopped);
-        EIC->BindAction(IA_Drag,    ETriggerEvent::Canceled,   this, &ARGGlobePawn::OnDragStopped);
-        EIC->BindAction(IA_Zoom,    ETriggerEvent::Triggered,  this, &ARGGlobePawn::OnZoom);
-        EIC->BindAction(IA_MouseXY, ETriggerEvent::Triggered,  this, &ARGGlobePawn::OnMouseXY);
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Started,   this, &ARGGlobePawn::OnDragStarted);
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Completed, this, &ARGGlobePawn::OnDragStopped);
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Canceled,  this, &ARGGlobePawn::OnDragStopped);
+        EIC->BindAction(IA_Zoom,    ETriggerEvent::Triggered, this, &ARGGlobePawn::OnZoom);
+        EIC->BindAction(IA_MouseXY, ETriggerEvent::Triggered, this, &ARGGlobePawn::OnMouseXY);
     }
+
+    // WASD pan — legacy axis bindings work reliably in GameOnly mode
+    PlayerInputComponent->BindAxis("MoveForward", this, &ARGGlobePawn::MoveForward);
+    PlayerInputComponent->BindAxis("MoveRight",   this, &ARGGlobePawn::MoveRight);
 }
 
 void ARGGlobePawn::Tick(float DeltaTime)
@@ -114,19 +107,14 @@ void ARGGlobePawn::Tick(float DeltaTime)
             SpringArm->TargetArmLength, CurrentArmLength, DeltaTime, 8.0f);
     }
 
-    // Apply rotation while dragging — this pans the map by rotating the
-    // spring arm pivot. From a top-down perspective this feels like dragging
-    // the map underneath the camera (pan), not orbiting a globe.
+    // Mouse drag — rotate spring arm to pan the map
     if (bIsDragging && !LastMouseDelta.IsNearlyZero())
     {
         const FRotator CurrentRot = SpringArm->GetRelativeRotation();
-
-        // Invert X so dragging right moves the map right (natural pan feel)
         float NewYaw   = CurrentRot.Yaw   - LastMouseDelta.X * RotationSpeed;
         float NewPitch = FMath::Clamp(
             CurrentRot.Pitch + LastMouseDelta.Y * RotationSpeed,
             -89.0f, -15.0f);
-
         SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
         LastMouseDelta = FVector2D::ZeroVector;
     }
@@ -138,11 +126,6 @@ void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
 {
     bIsDragging    = true;
     LastMouseDelta = FVector2D::ZeroVector;
-}
-
-void ARGGlobePawn::OnDragOngoing(const FInputActionValue& /*Value*/)
-{
-    // Nothing — drag tracked via bIsDragging in Tick
 }
 
 void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
@@ -163,4 +146,26 @@ void ARGGlobePawn::OnZoom(const FInputActionValue& Value)
 void ARGGlobePawn::OnMouseXY(const FInputActionValue& Value)
 {
     LastMouseDelta = Value.Get<FVector2D>();
+}
+
+// ─── WASD pan ─────────────────────────────────────────────────────────────────
+
+void ARGGlobePawn::MoveForward(float Value)
+{
+    // W = вперёд = север = уменьшаем Yaw нет, это панорамирование по глобусу.
+    // Мы вращаем SpringArm: Pitch вверх/вниз, Yaw влево/вправо.
+    // MoveForward (W/S) — меняем Pitch (наклон к югу/северу)
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER || !SpringArm) return;
+    const FRotator Rot = SpringArm->GetRelativeRotation();
+    float NewPitch = FMath::Clamp(Rot.Pitch - Value * KeyboardPanSpeed, -89.0f, -15.0f);
+    SpringArm->SetRelativeRotation(FRotator(NewPitch, Rot.Yaw, 0.0f));
+}
+
+void ARGGlobePawn::MoveRight(float Value)
+{
+    // A/D — меняем Yaw (поворот запад/восток)
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER || !SpringArm) return;
+    const FRotator Rot = SpringArm->GetRelativeRotation();
+    float NewYaw = Rot.Yaw + Value * KeyboardPanSpeed;
+    SpringArm->SetRelativeRotation(FRotator(Rot.Pitch, NewYaw, 0.0f));
 }

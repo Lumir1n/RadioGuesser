@@ -13,12 +13,12 @@ class UInputAction;
 struct FInputActionValue;
 
 /**
- * ARGGlobePawn
+ * ARGGlobePawn — Google Earth-style globe camera.
  *
- * Google Earth-style globe camera:
- *  - Left Mouse Drag      → rotate/orbit the globe
- *  - Mouse Wheel          → zoom in/out
- *  - Left Mouse Click     → place guess marker (short click, no drag)
+ * Controls:
+ *   LMB drag   — pan the map (rotate spring arm)
+ *   Mouse wheel — zoom
+ *   WASD        — pan (W=north, S=south, A=west, D=east)
  */
 UCLASS()
 class RADIOGUESSER_API ARGGlobePawn : public APawn
@@ -33,16 +33,17 @@ protected:
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
     virtual void Tick(float DeltaTime) override;
 
-    // ── Input handlers ─────────────────────────────────────────────────────────
+    // ── Enhanced Input handlers ────────────────────────────────────────────────
+    void OnDragStarted (const FInputActionValue& Value);
+    void OnDragStopped (const FInputActionValue& Value);
+    void OnZoom        (const FInputActionValue& Value);
+    void OnMouseXY     (const FInputActionValue& Value);
 
-    void OnDragStarted   (const FInputActionValue& Value);
-    void OnDragOngoing   (const FInputActionValue& Value);
-    void OnDragStopped   (const FInputActionValue& Value);
-    void OnZoom          (const FInputActionValue& Value);
-    void OnMouseXY       (const FInputActionValue& Value);
+    // ── Legacy axis handlers (WASD) ───────────────────────────────────────────
+    void MoveForward(float Value);
+    void MoveRight  (float Value);
 
     // ── Components ─────────────────────────────────────────────────────────────
-
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<USceneComponent> GlobeRoot;
 
@@ -53,37 +54,34 @@ protected:
     TObjectPtr<UCameraComponent> Camera;
 
     // ── Tuning ─────────────────────────────────────────────────────────────────
-
-    /** How fast the globe rotates when dragging (degrees per pixel) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float RotationSpeed = 0.3f;
+    float RotationSpeed    = 0.3f;
 
-    /** Zoom speed multiplier */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float ZoomSpeed = 500000.0f;
+    float ZoomSpeed        = 500000.0f;
 
-    /** Minimum arm length (closest zoom) in cm */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MinArmLength = 700000.0f;   // ~7000 km
+    float MinArmLength     = 700000.0f;
 
-    /** Maximum arm length (farthest zoom) in cm */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MaxArmLength = 3500000.0f;  // ~35000 km
+    float MaxArmLength     = 3500000.0f;
 
-    /** Drag must exceed this many pixels to NOT count as a click */
+    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
+    float KeyboardPanSpeed = 1.5f;
+
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float ClickDragThreshold = 8.0f;
 
 private:
-    // Input assets (auto-loaded in BeginPlay)
+    // Created in constructor so they exist when SetupPlayerInputComponent runs
     UPROPERTY() TObjectPtr<UInputMappingContext> MappingContext;
     UPROPERTY() TObjectPtr<UInputAction>         IA_Drag;
     UPROPERTY() TObjectPtr<UInputAction>         IA_Zoom;
     UPROPERTY() TObjectPtr<UInputAction>         IA_MouseXY;
 
-    bool   bIsDragging      = false;
-    float  TotalDragPixels  = 0.0f;
-    float  CurrentArmLength = 1800000.0f;
+    bool      bIsDragging      = false;
+    float     TotalDragPixels  = 0.0f;
+    float     CurrentArmLength = 1800000.0f;
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
 };
