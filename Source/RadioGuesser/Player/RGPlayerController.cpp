@@ -27,16 +27,17 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // GameAndUI with LockAlways:
-    //   - Viewport is permanently captured (no click-to-focus needed)
-    //   - Mouse cursor stays visible for map interaction
-    //   - All mouse/keyboard input is routed through the game input system
-    // This is the correct mode when you need a visible cursor that also
-    // controls the game (GeoGuessr-style map clicking).
+    // FInputModeGameOnly: Slate receives NO mouse events at all.
+    // This means:
+    //   - No "click to focus" behaviour — input works instantly
+    //   - LMB goes straight to the game input system (no Slate intercept)
+    //   - No "enter/exit drag mode" artefact when pressing/releasing LMB
+    //   - bShowMouseCursor = true still shows the hardware cursor so the
+    //     player can see where they are clicking on the map.
+    // This is the correct mode for a GeoGuessr-style map game where the
+    // cursor must remain visible but ALL input belongs to the game.
     {
-        FInputModeGameAndUI Mode;
-        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
-        Mode.SetHideCursorDuringCapture(false);
+        FInputModeGameOnly Mode;
         SetInputMode(Mode);
         bShowMouseCursor = true;
     }
