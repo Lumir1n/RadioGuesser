@@ -69,11 +69,11 @@ protected:
 
     /** Минимальная высота камеры (ближайший zoom) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MinArmLength = 50000.0f;   // ~500 км — смотрим на город
+    float MinArmLength = 10000000.0f;   // 100 км — детали города
 
     /** Максимальная высота камеры (дальний zoom) — весь глобус */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MaxArmLength = 20000000.0f;  // ~200 000 км — весь мир
+    float MaxArmLength = 3000000000.0f;  // 30 000 км — весь мир
 
     /** Скорость WASD (доля arm_length за тик) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
@@ -94,7 +94,7 @@ private:
 
     bool      bIsDragging      = false;
     float     TotalDragPixels  = 0.0f;
-    float     CurrentArmLength = 1800000.0f;  // старт ~18 000 км
+    float     CurrentArmLength = 500000000.0f;  // старт ~5000 км — видны континенты
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
 };

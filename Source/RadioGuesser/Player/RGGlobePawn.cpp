@@ -22,7 +22,7 @@ ARGGlobePawn::ARGGlobePawn()
 
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(GlobeRoot);
-    SpringArm->TargetArmLength  = CurrentArmLength;
+    SpringArm->TargetArmLength  = 500000000.0f;  // ~5000 км
     SpringArm->bDoCollisionTest = false;
     SpringArm->bEnableCameraLag = true;
     SpringArm->CameraLagSpeed   = 8.0f;
