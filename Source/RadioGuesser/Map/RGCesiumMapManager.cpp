@@ -10,11 +10,21 @@
 #include "Cesium3DTileset.h"
 #include "CesiumRasterOverlay.h"
 #include "CesiumUrlTemplateRasterOverlay.h"
+#include "GameFramework/WorldSettings.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/LightComponent.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Kismet/GameplayStatics.h"
+#include "Player/RGGlobePawn.h"
 
 ARGCesiumMapManager::ARGCesiumMapManager()
 {
-    // Ticking disabled — no per-frame work needed
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     SetRootComponent(Root);
@@ -56,12 +66,29 @@ void ARGCesiumMapManager::BeginPlay()
         {
             MapSub->OnGuessPlaced.AddDynamic(this, &ARGCesiumMapManager::OnGuessPlaced);
             MapSub->OnGuessResult.AddDynamic(this, &ARGCesiumMapManager::OnGuessResult);
+            MapSub->OnGuessCleared.AddDynamic(this, &ARGCesiumMapManager::OnGuessCleared);
         }
     }
 
     // Add MapTiler Natural Earth overlay to Cesium World Terrain
     // This replaces Bing Maps and has no watermark on the tiles themselves
     AddMapTilerOverlay();
+    ConfigureGlobeLighting();
+    EnsureMarkerMeshes();
+}
+
+void ARGCesiumMapManager::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    if (bGuessMarkerOn)
+    {
+        UpdateMarkerTransform(GuessMarkerMesh, LastGuessCoord);
+    }
+    if (bActualMarkerOn)
+    {
+        UpdateMarkerTransform(ActualLocationMarkerMesh, LastActualCoord);
+    }
 }
 
 // ─── Coordinate conversion ────────────────────────────────────────────────────
@@ -118,43 +145,41 @@ void ARGCesiumMapManager::HandleMapClick(FVector WorldHitPosition)
 
 void ARGCesiumMapManager::PlaceGuessMarker(FRGGeoCoordinate Coordinate)
 {
-    if (!GuessMarkerMesh) return;
-
-    const FVector WorldPos = GeoToWorld(Coordinate);
-    GuessMarkerMesh->SetWorldLocation(WorldPos);
-
-    if (CesiumGeoreference)
+    LastGuessCoord = Coordinate;
+    bGuessMarkerOn = true;
+    UpdateMarkerTransform(GuessMarkerMesh, Coordinate);
+    if (GuessMarkerMesh)
     {
-        const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
-            FRotator::ZeroRotator, WorldPos);
-        GuessMarkerMesh->SetWorldRotation(UpRot);
+        GuessMarkerMesh->SetVisibility(true);
     }
-
-    GuessMarkerMesh->SetVisibility(true);
 }
 
 void ARGCesiumMapManager::ShowRoundResult(FRGGeoCoordinate GuessCoord, FRGGeoCoordinate ActualCoord)
 {
     PlaceGuessMarker(GuessCoord);
 
+    LastActualCoord = ActualCoord;
+    bActualMarkerOn = true;
+    UpdateMarkerTransform(ActualLocationMarkerMesh, ActualCoord);
     if (ActualLocationMarkerMesh)
     {
-        const FVector ActualPos = GeoToWorld(ActualCoord);
-        ActualLocationMarkerMesh->SetWorldLocation(ActualPos);
-
-        if (CesiumGeoreference)
-        {
-            const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
-                FRotator::ZeroRotator, ActualPos);
-            ActualLocationMarkerMesh->SetWorldRotation(UpRot);
-        }
-
         ActualLocationMarkerMesh->SetVisibility(true);
+    }
+
+    if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0))
+    {
+        if (ARGGlobePawn* Globe = Cast<ARGGlobePawn>(Pawn))
+        {
+            const float DistKm = URGMapSubsystem::HaversineDistanceKm(GuessCoord, ActualCoord);
+            Globe->FocusOnGuessResult(GuessCoord, ActualCoord, DistKm);
+        }
     }
 }
 
 void ARGCesiumMapManager::ClearRoundOverlays()
 {
+    bGuessMarkerOn  = false;
+    bActualMarkerOn = false;
     if (GuessMarkerMesh)          GuessMarkerMesh->SetVisibility(false);
     if (ActualLocationMarkerMesh) ActualLocationMarkerMesh->SetVisibility(false);
 }
@@ -169,6 +194,113 @@ void ARGCesiumMapManager::OnGuessPlaced(FRGGeoCoordinate Coordinate)
 void ARGCesiumMapManager::OnGuessResult(FRGGuessResult Result)
 {
     ShowRoundResult(Result.PlayerGuess, Result.ActualLocation);
+}
+
+void ARGCesiumMapManager::OnGuessCleared()
+{
+    ClearRoundOverlays();
+}
+
+void ARGCesiumMapManager::UpdateMarkerTransform(UStaticMeshComponent* Mesh, FRGGeoCoordinate Coordinate)
+{
+    if (!Mesh)
+    {
+        return;
+    }
+
+    const FVector WorldPos = GeoToWorld(Coordinate);
+    Mesh->SetWorldLocation(WorldPos);
+
+    if (CesiumGeoreference)
+    {
+        const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
+            FRotator::ZeroRotator, WorldPos);
+        Mesh->SetWorldRotation(UpRot);
+    }
+}
+
+void ARGCesiumMapManager::EnsureMarkerMeshes()
+{
+    UStaticMesh* Sphere = LoadObject<UStaticMesh>(
+        nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    if (!Sphere)
+    {
+        return;
+    }
+
+    auto SetupMarker = [Sphere](UStaticMeshComponent* Mesh, const FLinearColor& Color, float Scale)
+    {
+        if (!Mesh)
+        {
+            return;
+        }
+        if (!Mesh->GetStaticMesh())
+        {
+            Mesh->SetStaticMesh(Sphere);
+        }
+        Mesh->SetWorldScale3D(FVector(Scale));
+        Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(
+                nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+        {
+            if (UMaterialInstanceDynamic* MID = Mesh->CreateDynamicMaterialInstance(0, Base))
+            {
+                MID->SetVectorParameterValue(TEXT("Color"), Color);
+            }
+        }
+    };
+
+    SetupMarker(GuessMarkerMesh, FLinearColor(1.0f, 0.85f, 0.1f), 800.0f);
+    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.15f, 0.1f), 800.0f);
+}
+
+void ARGCesiumMapManager::ConfigureGlobeLighting()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    if (AWorldSettings* WS = World->GetWorldSettings())
+    {
+        WS->bEnableWorldBoundsChecks = false;
+    }
+
+    for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+    {
+        if (ULightComponent* Light = It->GetLightComponent())
+        {
+            Light->SetCastShadows(false);
+            Light->SetIntensity(12.0f);
+        }
+    }
+
+    ASkyLight* Sky = nullptr;
+    for (TActorIterator<ASkyLight> It(World); It; ++It)
+    {
+        Sky = *It;
+        break;
+    }
+
+    if (!Sky)
+    {
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        Sky = World->SpawnActor<ASkyLight>(Params);
+    }
+
+    if (Sky)
+    {
+        if (USkyLightComponent* SkyComp = Sky->GetLightComponent())
+        {
+            SkyComp->SetMobility(EComponentMobility::Movable);
+            SkyComp->bLowerHemisphereIsBlack = false;
+            SkyComp->LowerHemisphereColor = FLinearColor::White;
+            SkyComp->SetIntensity(6.0f);
+            SkyComp->RecaptureSky();
+        }
+    }
 }
 
 // ─── MapTiler overlay ─────────────────────────────────────────────────────────
