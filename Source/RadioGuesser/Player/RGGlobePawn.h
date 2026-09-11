@@ -84,7 +84,7 @@ protected:
     float ClickDragThreshold = 8.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float RotationSpeed = 0.3f;
+    float RotationSpeed = 0.15f;  // градусов на пиксель мыши (при нормальной высоте)
 
 private:
     UPROPERTY() TObjectPtr<UInputMappingContext> MappingContext;
@@ -95,6 +95,10 @@ private:
     bool      bIsDragging      = false;
     float     TotalDragPixels  = 0.0f;
     float     CurrentArmLength = 500000000.0f;  // старт ~5000 км — видны континенты
+
+    // Текущий угол обзора глобуса (SpringArm вращается вокруг пауна в (0,0,0))
+    float     CurrentYaw       = 0.0f;    // горизонтальный поворот (долгота)
+    float     CurrentPitch     = -45.0f;  // вертикальный наклон (-85=вниз, -5=горизонт)
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
 };

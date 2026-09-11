@@ -24,10 +24,9 @@ ARGGlobePawn::ARGGlobePawn()
     SpringArm->SetupAttachment(GlobeRoot);
     SpringArm->TargetArmLength  = 500000000.0f;  // ~5000 км
     SpringArm->bDoCollisionTest = false;
-    SpringArm->bEnableCameraLag = true;
-    SpringArm->CameraLagSpeed   = 8.0f;
-    SpringArm->bInheritPitch    = false;  // Pitch всегда фиксированный
-    SpringArm->bInheritYaw      = false;  // Yaw не наследуем от пауна
+    SpringArm->bEnableCameraLag = false;  // отключён — lag мешает при быстром вращении
+    SpringArm->bInheritPitch    = false;  // SpringArm управляет своим Pitch сам
+    SpringArm->bInheritYaw      = false;  // SpringArm управляет своим Yaw сам
     SpringArm->bInheritRoll     = false;
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -38,7 +37,7 @@ ARGGlobePawn::ARGGlobePawn()
     bUseControllerRotationYaw   = false;
     bUseControllerRotationRoll  = false;
 
-    // Input assets created in constructor
+    // Input assets created in constructor so SetupPlayerInputComponent can bind them
     MappingContext = CreateDefaultSubobject<UInputMappingContext>(TEXT("IMC_Globe"));
 
     IA_Drag    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeDrag"));
@@ -59,12 +58,16 @@ void ARGGlobePawn::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Паун всегда в центре Земли — вращаем SpringArm, не перемещаем паун
     SetActorLocation(FVector::ZeroVector);
-    SpringArm->TargetArmLength = CurrentArmLength;
 
-    // Камера смотрит прямо вниз (pitch -90 = вертикально вниз)
-    // Так карта выглядит как вид сверху без перспективного искажения
-    SpringArm->SetRelativeRotation(FRotator(-70.0f, 0.0f, 0.0f));
+    // Начальная ориентация: смотрим на Европу немного сверху
+    // Yaw=0 = смотрим с востока на запад, Pitch=-45 = 45° ниже горизонта
+    CurrentYaw   = 0.0f;
+    CurrentPitch = -45.0f;
+
+    SpringArm->TargetArmLength = CurrentArmLength;
+    SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.0f));
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
@@ -99,25 +102,35 @@ void ARGGlobePawn::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Smooth zoom
+    // ── Smooth zoom ────────────────────────────────────────────────────────────
     if (SpringArm)
     {
         SpringArm->TargetArmLength = FMath::FInterpTo(
             SpringArm->TargetArmLength, CurrentArmLength, DeltaTime, 8.0f);
     }
 
-    // Mouse drag — перемещаем ПАУН горизонтально по карте.
-    // Движение мыши вправо = карта едет влево = паун едет вправо.
-    // Масштаб скорости пропорционален высоте камеры: чем выше — тем быстрее пан.
+    // ── Globe rotation via drag ────────────────────────────────────────────────
+    // Мышь тащит Землю: движение вправо = Yaw увеличивается (глобус поворачивается)
+    // Движение вверх = смотрим более сверху (Pitch уменьшается)
     if (bIsDragging && !LastMouseDelta.IsNearlyZero())
     {
-        const float Scale = SpringArm->TargetArmLength * PanScale;
-        const FVector Delta(
-            -LastMouseDelta.Y * Scale,  // вперёд/назад
-             LastMouseDelta.X * Scale,  // влево/вправо (инвертировано — тащим карту)
-             0.0f
-        );
-        AddActorWorldOffset(Delta);
+        // Скорость вращения в градусах масштабируется с высотой:
+        // вблизи — медленнее (точнее), далеко — быстрее (охватываем больший угол)
+        const float HeightFactor = FMath::Clamp(
+            CurrentArmLength / 500000000.0f,  // нормировано к 5000 км
+            0.1f, 10.0f);
+        const float DragDeg = RotationSpeed * HeightFactor;
+
+        // X мыши вправо → Yaw-- (Земля крутится влево под камерой)
+        CurrentYaw   -= LastMouseDelta.X * DragDeg;
+        // Y мыши вниз → Pitch++ (камера опускается к горизонту)
+        CurrentPitch += LastMouseDelta.Y * DragDeg;
+
+        // Ограничение Pitch: -85° = почти прямо вниз, -5° = почти горизонт
+        CurrentPitch = FMath::Clamp(CurrentPitch, -85.0f, -5.0f);
+
+        SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.0f));
+
         LastMouseDelta = FVector2D::ZeroVector;
     }
 }
@@ -139,8 +152,7 @@ void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
 void ARGGlobePawn::OnZoom(const FInputActionValue& Value)
 {
     const float Axis = Value.Get<float>();
-    // Логарифмический zoom: скорость пропорциональна текущей высоте.
-    // Одно деление колёсика = 15% от текущей высоты.
+    // Логарифмический zoom: одно деление колёсика = 15% текущей высоты
     const float ZoomDelta = CurrentArmLength * 0.15f * Axis;
     CurrentArmLength = FMath::Clamp(
         CurrentArmLength - ZoomDelta,
@@ -153,18 +165,29 @@ void ARGGlobePawn::OnMouseXY(const FInputActionValue& Value)
     LastMouseDelta = Value.Get<FVector2D>();
 }
 
-// ─── WASD pan ─────────────────────────────────────────────────────────────────
+// ─── WASD pan (вращение глобуса клавишами) ────────────────────────────────────
 
 void ARGGlobePawn::MoveForward(float Value)
 {
     if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
-    const float Scale = SpringArm->TargetArmLength * PanScale;
-    AddActorWorldOffset(FVector(Value * KeyboardPanSpeed * Scale, 0.0f, 0.0f));
+
+    // W = смотрим ниже (двигаемся к экватору/южному полюсу)
+    // S = смотрим выше (двигаемся к северному полюсу)
+    const float HeightFactor = FMath::Clamp(CurrentArmLength / 500000000.0f, 0.1f, 10.0f);
+    CurrentPitch += Value * KeyboardPanSpeed * RotationSpeed * HeightFactor;
+    CurrentPitch  = FMath::Clamp(CurrentPitch, -85.0f, -5.0f);
+
+    SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.0f));
 }
 
 void ARGGlobePawn::MoveRight(float Value)
 {
     if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
-    const float Scale = SpringArm->TargetArmLength * PanScale;
-    AddActorWorldOffset(FVector(0.0f, Value * KeyboardPanSpeed * Scale, 0.0f));
+
+    // D = поворот глобуса вправо (Yaw--)
+    // A = поворот глобуса влево  (Yaw++)
+    const float HeightFactor = FMath::Clamp(CurrentArmLength / 500000000.0f, 0.1f, 10.0f);
+    CurrentYaw -= Value * KeyboardPanSpeed * RotationSpeed * HeightFactor;
+
+    SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.0f));
 }
