@@ -63,6 +63,9 @@ protected:
     virtual void BeginPlay() override;
     virtual void SetupInputComponent() override;
 
+    // Called when Escape is pressed — returns mouse cursor to UI/editor
+    virtual void OnEscapePressed();
+
 private:
     void OnMapClick    (const FInputActionValue& Value);
     void OnConfirmGuess(const FInputActionValue& Value);

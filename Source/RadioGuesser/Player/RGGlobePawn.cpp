@@ -147,23 +147,15 @@ void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
 
 void ARGGlobePawn::OnDragOngoing(const FInputActionValue& /*Value*/)
 {
-    TotalDragPixels += LastMouseDelta.Size();
+    // Nothing needed here — drag state is tracked via bIsDragging in Tick
 }
 
 void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
 {
-    const bool bWasClick = TotalDragPixels < ClickDragThreshold;
+    // Just stop dragging — click detection is handled by IA_MapClick in
+    // ARGPlayerController so we don't need to forward it here.
+    // (Formerly there was a click-vs-drag check here that caused double-firing.)
     bIsDragging = false;
-
-    if (bWasClick)
-    {
-        // It was a click not a drag — forward to PlayerController for guess placement
-        if (ARGPlayerController* PC = Cast<ARGPlayerController>(GetController()))
-        {
-            PC->TryPlaceGuessAtCursor();
-        }
-    }
-
     LastMouseDelta = FVector2D::ZeroVector;
 }
 

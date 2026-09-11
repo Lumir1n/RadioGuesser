@@ -17,7 +17,8 @@
 
 ARGPlayerController::ARGPlayerController()
 {
-    bShowMouseCursor       = true;
+    // bShowMouseCursor is intentionally NOT set here.
+    // It is controlled in BeginPlay based on input mode.
     bEnableClickEvents     = true;
     bEnableMouseOverEvents = true;
 }
@@ -27,19 +28,20 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // FInputModeGameOnly: Slate receives NO mouse events at all.
-    // This means:
-    //   - No "click to focus" behaviour — input works instantly
-    //   - LMB goes straight to the game input system (no Slate intercept)
-    //   - No "enter/exit drag mode" artefact when pressing/releasing LMB
-    //   - bShowMouseCursor = true still shows the hardware cursor so the
-    //     player can see where they are clicking on the map.
-    // This is the correct mode for a GeoGuessr-style map game where the
-    // cursor must remain visible but ALL input belongs to the game.
+    // ── Input mode ────────────────────────────────────────────────────────────
+    // FInputModeGameOnly:
+    //   • Slate gets NO mouse events → no "click to focus" on viewport border
+    //   • LMB goes straight to Enhanced Input, so IA_GlobeDrag works immediately
+    //   • Hardware cursor is hidden (GameOnly always hides it in PIE).
+    //     The player navigates the map like a first-person game — the mouse
+    //     pointer is the invisible crosshair. To show position we could add
+    //     a software cursor widget later, but for now gameplay works without one.
+    // Pressing Escape calls OnEscapePressed which switches back to GameAndUI
+    // so the player can interact with UI and the editor again.
     {
         FInputModeGameOnly Mode;
         SetInputMode(Mode);
-        bShowMouseCursor = true;
+        bShowMouseCursor = false;  // GameOnly hides OS cursor → all movement goes to game
     }
 
     // Auto-load input assets if not assigned in Blueprint defaults
@@ -111,6 +113,10 @@ void ARGPlayerController::SetupInputComponent()
                 this, &ARGPlayerController::OnConfirmGuess);
         }
     }
+
+    // Bind Escape through the old input system (reliable in PIE, no IMC needed)
+    InputComponent->BindKey(EKeys::Escape, IE_Pressed, this,
+        &ARGPlayerController::OnEscapePressed);
 }
 
 // ─── Input handlers ───────────────────────────────────────────────────────────
@@ -183,6 +189,22 @@ void ARGPlayerController::ConfirmGuess()
 void ARGPlayerController::ResetGuessLock()
 {
     bGuessSubmitted = false;
+}
+
+// ─── Escape / focus toggle ────────────────────────────────────────────────────
+
+void ARGPlayerController::OnEscapePressed()
+{
+    // Switch to GameAndUI so the OS cursor reappears and the editor/Slate
+    // regains focus. The player can press Play again to re-enter game mode.
+    // In a shipped build this would open a pause menu instead.
+    FInputModeGameAndUI Mode;
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    Mode.SetHideCursorDuringCapture(false);
+    SetInputMode(Mode);
+    bShowMouseCursor = true;
+
+    UE_LOG(LogMatch, Log, TEXT("ARGPlayerController: Escape pressed — releasing mouse capture."));
 }
 
 // ─── Server RPC ───────────────────────────────────────────────────────────────
