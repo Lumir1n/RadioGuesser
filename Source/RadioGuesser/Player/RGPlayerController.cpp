@@ -29,12 +29,14 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // Game-only input mode: all mouse/keyboard events go to the game,
-    // cursor stays visible via bShowMouseCursor.
-    // This ensures both the pawn's drag bindings AND the controller's click
-    // binding fire reliably without Slate intercepting LMB presses.
+    // Game-and-UI input mode with viewport lock:
+    // - cursor is visible (needed for GetHitResultUnderCursor + GetMousePosition in the pawn)
+    // - mouse is locked inside the viewport so drag works correctly
+    // - Slate does NOT intercept LMB, so both pawn drag AND controller click bindings fire
     {
-        FInputModeGameOnly Mode;
+        FInputModeGameAndUI Mode;
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
+        Mode.SetHideCursorDuringCapture(false);
         SetInputMode(Mode);
         bShowMouseCursor = true;
     }

@@ -148,20 +148,13 @@ void ARGGlobePawn::ApplyCameraToGlobe()
     }
 
     // Keep the Unreal origin roughly under the look-at point to prevent
-    // world-bounds / far-clip issues at extreme longitude/latitude values.
-    //
-    // IMPORTANT: SetOriginLongitudeLatitudeHeight triggers a full Cesium tile
-    // tree rebuild which causes the visible seam / "map splits in two" artefact.
-    // We therefore rebase ONLY when:
-    //   (a) the view has drifted more than 2° from the last applied origin, AND
-    //   (b) the camera is high enough that the seam won't be obvious (> 300 km).
-    // At close range floating-point error is negligible and rebasing does more
-    // harm than good (tears between LOD levels).
+    // world-bounds / far-clip issues. We rebase ONLY when the view drifts
+    // far enough AND the camera is high (so the tile-reload seam isn't visible).
     const double DeltaLon = FMath::Abs(ViewLongitude - AppliedOriginLongitude);
     const double DeltaLat = FMath::Abs(ViewLatitude  - AppliedOriginLatitude);
-    const bool bFarFromOrigin  = (DeltaLon > 2.0 || DeltaLat > 2.0);
-    const bool bHighEnough     = (CurrentArmLength > 30000000.0f); // > 300 km
-    const bool bNeverApplied   = (AppliedOriginLongitude > 1.0e30);
+    const bool bFarFromOrigin = (DeltaLon > 2.0 || DeltaLat > 2.0);
+    const bool bHighEnough    = (CurrentArmLength > 30000000.0f); // > 300 km
+    const bool bNeverApplied  = (AppliedOriginLongitude > 1.0e30);
 
     if (bNeverApplied || (bFarFromOrigin && bHighEnough))
     {
@@ -171,10 +164,22 @@ void ARGGlobePawn::ApplyCameraToGlobe()
         AppliedOriginLatitude  = ViewLatitude;
     }
 
-    SetActorLocation(FVector(0.0, 0.0, CurrentArmLength));
+    // Position the camera ABOVE the look-at point along the local surface normal.
+    // Using TransformLongitudeLatitudeHeightPositionToUnreal gives the correct UE
+    // world position even when the Cesium origin is not at the equator — this is
+    // what prevents the "double image / horizontal stripe" artefact that appears
+    // when SetActorLocation(0, 0, Height) is used (which only works at the equator).
+    const double HeightMeters = static_cast<double>(CurrentArmLength) * 0.01; // cm → m
+    const FVector CameraWorldPos = CachedGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
+        FVector(ViewLongitude, ViewLatitude, HeightMeters));
+    SetActorLocation(CameraWorldPos);
 
-    // At a Cesium cartographic origin: +X east, +Y south, +Z up.
-    // Look straight down with north at the top of the screen.
+    // Orientation: look straight down with north at the top of the screen.
+    // In the Cesium ENU frame at the look-at origin:
+    //   East  = UE +X
+    //   South = UE +Y  (Cesium uses South, not North)
+    //   Up    = UE +Z
+    // "Look down" means -Z in UE, "north up on screen" means -Y in UE (anti-south).
     SetActorRotation(
         FRotationMatrix::MakeFromXZ(FVector::DownVector, FVector(0.0f, -1.0f, 0.0f)).Rotator());
 }
