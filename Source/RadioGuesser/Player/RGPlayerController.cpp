@@ -29,11 +29,12 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // Visible cursor: drag pans the globe under the pointer (Google Earth).
+    // Game-only input mode: all mouse/keyboard events go to the game,
+    // cursor stays visible via bShowMouseCursor.
+    // This ensures both the pawn's drag bindings AND the controller's click
+    // binding fire reliably without Slate intercepting LMB presses.
     {
-        FInputModeGameAndUI Mode;
-        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-        Mode.SetHideCursorDuringCapture(false);
+        FInputModeGameOnly Mode;
         SetInputMode(Mode);
         bShowMouseCursor = true;
     }
@@ -216,16 +217,15 @@ void ARGPlayerController::HandleMatchStateChanged(ERGMatchState NewState)
 
 void ARGPlayerController::OnEscapePressed()
 {
-    // Switch to GameAndUI so the OS cursor reappears and the editor/Slate
-    // regains focus. The player can press Play again to re-enter game mode.
-    // In a shipped build this would open a pause menu instead.
+    // Toggle back to GameAndUI on Escape so Slate/editor regains focus in PIE.
+    // In a shipped build this would open a pause menu.
     FInputModeGameAndUI Mode;
     Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
     Mode.SetHideCursorDuringCapture(false);
     SetInputMode(Mode);
     bShowMouseCursor = true;
 
-    UE_LOG(LogMatch, Log, TEXT("ARGPlayerController: Escape pressed — releasing mouse capture."));
+    UE_LOG(LogMatch, Log, TEXT("ARGPlayerController: Escape — released to GameAndUI mode."));
 }
 
 // ─── Server RPC ───────────────────────────────────────────────────────────────

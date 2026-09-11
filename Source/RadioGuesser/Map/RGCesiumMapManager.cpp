@@ -340,13 +340,17 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
             ExistingOverlays.Num());
     }
 
-    // ── Step 2: Add MapTiler Basic-v2 raster tiles.
-    //    URL format: /maps/{style}/256/{z}/{x}/{y}.png — the 256/ prefix is
-    //    mandatory. Without it MapTiler returns a vector style JSON document
-    //    instead of PNG images, which Cesium cannot render.
+    // ── Step 2: Add MapTiler Streets-v2 raster tiles.
+    //    streets-v2 is colourful and cartoonish with strong country borders —
+    //    much more game-like than basic-v2.
+    //
+    //    URL format: /maps/{style}/256/{z}/{x}/{y}.png
+    //    MaximumLevel = 14: MapTiler raster tiles top out at zoom 14 for most
+    //    styles. Allowing higher values causes Cesium to request non-existent
+    //    tiles which return blank/error images and look like blurry patches.
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
+        TEXT("https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=%s"),
         *MapTilerKey);
 
     UCesiumUrlTemplateRasterOverlay* Overlay =
@@ -363,14 +367,12 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
     Overlay->TemplateUrl = TileUrl;
 
-    // Cesium's {y} in WebMercator projection: y=0 = northernmost tile.
-    // MapTiler Basic-v2 also uses y=0 = north (XYZ/Slippy Map convention).
-    // They match — use {y} directly.
-    Overlay->Projection = ECesiumUrlTemplateRasterOverlayProjection::WebMercator;
-    Overlay->TileWidth  = 256;
-    Overlay->TileHeight = 256;
+    // XYZ/Slippy Map convention: y=0 = northernmost tile — matches Cesium WebMercator.
+    Overlay->Projection   = ECesiumUrlTemplateRasterOverlayProjection::WebMercator;
+    Overlay->TileWidth    = 256;
+    Overlay->TileHeight   = 256;
     Overlay->MinimumLevel = 0;
-    Overlay->MaximumLevel = 19;
+    Overlay->MaximumLevel = 14;  // streets-v2 raster caps at zoom 14
     Overlay->bAutoActivate = true;
     Overlay->RegisterComponent();
     Tileset->AddInstanceComponent(Overlay);
