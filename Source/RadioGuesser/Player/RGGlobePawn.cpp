@@ -26,8 +26,8 @@ ARGGlobePawn::ARGGlobePawn()
     SpringArm->bDoCollisionTest = false;
     SpringArm->bEnableCameraLag = true;
     SpringArm->CameraLagSpeed   = 8.0f;
-    SpringArm->bInheritPitch    = true;
-    SpringArm->bInheritYaw      = true;
+    SpringArm->bInheritPitch    = false;  // Pitch всегда фиксированный
+    SpringArm->bInheritYaw      = false;  // Yaw не наследуем от пауна
     SpringArm->bInheritRoll     = false;
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -38,8 +38,7 @@ ARGGlobePawn::ARGGlobePawn()
     bUseControllerRotationYaw   = false;
     bUseControllerRotationRoll  = false;
 
-    // Create input assets in constructor — they MUST exist when
-    // SetupPlayerInputComponent runs (which is called before BeginPlay).
+    // Input assets created in constructor
     MappingContext = CreateDefaultSubobject<UInputMappingContext>(TEXT("IMC_Globe"));
 
     IA_Drag    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeDrag"));
@@ -51,7 +50,6 @@ ARGGlobePawn::ARGGlobePawn()
     IA_MouseXY = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeMouseXY"));
     IA_MouseXY->ValueType = EInputActionValueType::Axis2D;
 
-    // Map keys once at CDO time
     MappingContext->MapKey(IA_Drag,    EKeys::LeftMouseButton);
     MappingContext->MapKey(IA_Zoom,    EKeys::MouseWheelAxis);
     MappingContext->MapKey(IA_MouseXY, EKeys::Mouse2D);
@@ -63,9 +61,11 @@ void ARGGlobePawn::BeginPlay()
 
     SetActorLocation(FVector::ZeroVector);
     SpringArm->TargetArmLength = CurrentArmLength;
+
+    // Камера смотрит прямо вниз (pitch -90 = вертикально вниз)
+    // Так карта выглядит как вид сверху без перспективного искажения
     SpringArm->SetRelativeRotation(FRotator(-70.0f, 0.0f, 0.0f));
 
-    // Register IMC with the Enhanced Input subsystem
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
         if (ULocalPlayer* LP = PC->GetLocalPlayer())
@@ -91,7 +91,6 @@ void ARGGlobePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
         EIC->BindAction(IA_MouseXY, ETriggerEvent::Triggered, this, &ARGGlobePawn::OnMouseXY);
     }
 
-    // WASD pan — legacy axis bindings work reliably in GameOnly mode
     PlayerInputComponent->BindAxis("MoveForward", this, &ARGGlobePawn::MoveForward);
     PlayerInputComponent->BindAxis("MoveRight",   this, &ARGGlobePawn::MoveRight);
 }
@@ -107,15 +106,18 @@ void ARGGlobePawn::Tick(float DeltaTime)
             SpringArm->TargetArmLength, CurrentArmLength, DeltaTime, 8.0f);
     }
 
-    // Mouse drag — rotate spring arm to pan the map
+    // Mouse drag — перемещаем ПАУН горизонтально по карте.
+    // Движение мыши вправо = карта едет влево = паун едет вправо.
+    // Масштаб скорости пропорционален высоте камеры: чем выше — тем быстрее пан.
     if (bIsDragging && !LastMouseDelta.IsNearlyZero())
     {
-        const FRotator CurrentRot = SpringArm->GetRelativeRotation();
-        float NewYaw   = CurrentRot.Yaw   - LastMouseDelta.X * RotationSpeed;
-        float NewPitch = FMath::Clamp(
-            CurrentRot.Pitch + LastMouseDelta.Y * RotationSpeed,
-            -89.0f, -15.0f);
-        SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
+        const float Scale = SpringArm->TargetArmLength * PanScale;
+        const FVector Delta(
+            -LastMouseDelta.Y * Scale,  // вперёд/назад
+             LastMouseDelta.X * Scale,  // влево/вправо (инвертировано — тащим карту)
+             0.0f
+        );
+        AddActorWorldOffset(Delta);
         LastMouseDelta = FVector2D::ZeroVector;
     }
 }
@@ -152,20 +154,14 @@ void ARGGlobePawn::OnMouseXY(const FInputActionValue& Value)
 
 void ARGGlobePawn::MoveForward(float Value)
 {
-    // W = вперёд = север = уменьшаем Yaw нет, это панорамирование по глобусу.
-    // Мы вращаем SpringArm: Pitch вверх/вниз, Yaw влево/вправо.
-    // MoveForward (W/S) — меняем Pitch (наклон к югу/северу)
-    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER || !SpringArm) return;
-    const FRotator Rot = SpringArm->GetRelativeRotation();
-    float NewPitch = FMath::Clamp(Rot.Pitch - Value * KeyboardPanSpeed, -89.0f, -15.0f);
-    SpringArm->SetRelativeRotation(FRotator(NewPitch, Rot.Yaw, 0.0f));
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
+    const float Scale = SpringArm->TargetArmLength * PanScale;
+    AddActorWorldOffset(FVector(Value * KeyboardPanSpeed * Scale, 0.0f, 0.0f));
 }
 
 void ARGGlobePawn::MoveRight(float Value)
 {
-    // A/D — меняем Yaw (поворот запад/восток)
-    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER || !SpringArm) return;
-    const FRotator Rot = SpringArm->GetRelativeRotation();
-    float NewYaw = Rot.Yaw + Value * KeyboardPanSpeed;
-    SpringArm->SetRelativeRotation(FRotator(Rot.Pitch, NewYaw, 0.0f));
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
+    const float Scale = SpringArm->TargetArmLength * PanScale;
+    AddActorWorldOffset(FVector(0.0f, Value * KeyboardPanSpeed * Scale, 0.0f));
 }

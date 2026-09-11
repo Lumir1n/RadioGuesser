@@ -13,12 +13,16 @@ class UInputAction;
 struct FInputActionValue;
 
 /**
- * ARGGlobePawn — Google Earth-style globe camera.
+ * ARGGlobePawn — вид сверху, как в GeoGuessr.
  *
- * Controls:
- *   LMB drag   — pan the map (rotate spring arm)
- *   Mouse wheel — zoom
- *   WASD        — pan (W=north, S=south, A=west, D=east)
+ * Паун перемещается горизонтально по карте.
+ * SpringArm смотрит вертикально вниз (pitch -70).
+ * Zoom меняет высоту (длину SpringArm).
+ *
+ * Управление:
+ *   ЛКМ + тащи  — двигаем карту под камерой
+ *   Колёсико    — zoom (приближение/отдаление)
+ *   WASD        — движение по карте
  */
 UCLASS()
 class RADIOGUESSER_API ARGGlobePawn : public APawn
@@ -33,13 +37,13 @@ protected:
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
     virtual void Tick(float DeltaTime) override;
 
-    // ── Enhanced Input handlers ────────────────────────────────────────────────
+    // ── Enhanced Input ─────────────────────────────────────────────────────────
     void OnDragStarted (const FInputActionValue& Value);
     void OnDragStopped (const FInputActionValue& Value);
     void OnZoom        (const FInputActionValue& Value);
     void OnMouseXY     (const FInputActionValue& Value);
 
-    // ── Legacy axis handlers (WASD) ───────────────────────────────────────────
+    // ── Legacy axis (WASD) ────────────────────────────────────────────────────
     void MoveForward(float Value);
     void MoveRight  (float Value);
 
@@ -54,26 +58,35 @@ protected:
     TObjectPtr<UCameraComponent> Camera;
 
     // ── Tuning ─────────────────────────────────────────────────────────────────
-    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float RotationSpeed    = 0.3f;
 
+    /** Скорость пана мышью: смещение = delta_mouse * arm_length * PanScale */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float ZoomSpeed        = 500000.0f;
+    float PanScale = 0.0005f;
 
+    /** Скорость zoom колёсиком (см за тик колёсика) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MinArmLength     = 700000.0f;
+    float ZoomSpeed = 500000.0f;
 
+    /** Минимальная высота камеры (ближайший zoom) */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MaxArmLength     = 3500000.0f;
+    float MinArmLength = 50000.0f;   // ~500 км — смотрим на город
 
+    /** Максимальная высота камеры (дальний zoom) — весь глобус */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float KeyboardPanSpeed = 1.5f;
+    float MaxArmLength = 20000000.0f;  // ~200 000 км — весь мир
 
+    /** Скорость WASD (доля arm_length за тик) */
+    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
+    float KeyboardPanSpeed = 0.3f;
+
+    /** Устаревшее, оставлено для совместимости */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float ClickDragThreshold = 8.0f;
 
+    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
+    float RotationSpeed = 0.3f;
+
 private:
-    // Created in constructor so they exist when SetupPlayerInputComponent runs
     UPROPERTY() TObjectPtr<UInputMappingContext> MappingContext;
     UPROPERTY() TObjectPtr<UInputAction>         IA_Drag;
     UPROPERTY() TObjectPtr<UInputAction>         IA_Zoom;
@@ -81,7 +94,7 @@ private:
 
     bool      bIsDragging      = false;
     float     TotalDragPixels  = 0.0f;
-    float     CurrentArmLength = 1800000.0f;
+    float     CurrentArmLength = 1800000.0f;  // старт ~18 000 км
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
 };
