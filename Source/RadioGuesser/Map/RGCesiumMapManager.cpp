@@ -214,7 +214,7 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     //    instead of PNG images, which Cesium cannot render.
     const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
     const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{reverseY}.png?key=%s"),
+        TEXT("https://api.maptiler.com/maps/basic-v2/256/{z}/{x}/{y}.png?key=%s"),
         *MapTilerKey);
 
     UCesiumUrlTemplateRasterOverlay* Overlay =
@@ -231,10 +231,9 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
     Overlay->TemplateUrl = TileUrl;
 
-    // MapTiler uses standard XYZ/Google Maps tiling convention:
-    //   y=0 = northernmost tile (top of the map)
-    // Cesium's {y} placeholder uses TMS convention (y=0 = south).
-    // So we must use {reverseY} to match MapTiler's XYZ scheme.
+    // Cesium's {y} in WebMercator projection: y=0 = northernmost tile.
+    // MapTiler Basic-v2 also uses y=0 = north (XYZ/Slippy Map convention).
+    // They match — use {y} directly.
     Overlay->Projection = ECesiumUrlTemplateRasterOverlayProjection::WebMercator;
     Overlay->TileWidth  = 256;
     Overlay->TileHeight = 256;

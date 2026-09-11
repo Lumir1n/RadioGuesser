@@ -29,19 +29,17 @@ void ARGPlayerController::BeginPlay()
     bGuessSubmitted = false;
 
     // ── Input mode ────────────────────────────────────────────────────────────
-    // FInputModeGameOnly:
-    //   • Slate gets NO mouse events → no "click to focus" on viewport border
-    //   • LMB goes straight to Enhanced Input, so IA_GlobeDrag works immediately
-    //   • Hardware cursor is hidden (GameOnly always hides it in PIE).
-    //     The player navigates the map like a first-person game — the mouse
-    //     pointer is the invisible crosshair. To show position we could add
-    //     a software cursor widget later, but for now gameplay works without one.
-    // Pressing Escape calls OnEscapePressed which switches back to GameAndUI
-    // so the player can interact with UI and the editor again.
+    // GameAndUI + LockAlways:
+    //   • Cursor is VISIBLE — needed for GetHitResultUnderCursor + map clicking
+    //   • Mouse is locked inside the PIE viewport — no accidental editor clicks
+    //   • LMB/RMB/Wheel all fire through Enhanced Input to the game
+    //   • SetHideCursorDuringCapture(false) keeps cursor visible while dragging
     {
-        FInputModeGameOnly Mode;
+        FInputModeGameAndUI Mode;
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
+        Mode.SetHideCursorDuringCapture(false);
         SetInputMode(Mode);
-        bShowMouseCursor = false;  // GameOnly hides OS cursor → all movement goes to game
+        bShowMouseCursor = true;
     }
 
     // Auto-load input assets if not assigned in Blueprint defaults
