@@ -57,6 +57,10 @@ void ARGGlobePawn::BeginPlay()
     // We create standalone actions so we don't conflict with the game IMC
     MappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Globe"));
 
+    // LMB drag — Boolean fires Started on press, Completed on release
+    IA_Drag   = NewObject<UInputAction>(this, TEXT("IA_GlobeDrag"));
+    IA_Drag->ValueType = EInputActionValueType::Boolean;
+
     // Zoom: 1D axis from mouse wheel
     IA_Zoom   = NewObject<UInputAction>(this, TEXT("IA_GlobeZoom"));
     IA_Zoom->ValueType = EInputActionValueType::Axis1D;
@@ -65,11 +69,9 @@ void ARGGlobePawn::BeginPlay()
     IA_MouseXY = NewObject<UInputAction>(this, TEXT("IA_GlobeMouseXY"));
     IA_MouseXY->ValueType = EInputActionValueType::Axis2D;
 
-    // Mouse wheel → zoom
+    MappingContext->MapKey(IA_Drag,    EKeys::LeftMouseButton);
     MappingContext->MapKey(IA_Zoom,    EKeys::MouseWheelAxis);
-    // Mouse movement → delta
     MappingContext->MapKey(IA_MouseXY, EKeys::Mouse2D);
-    // LMB drag is handled via legacy BindAction (works in GameAndUI mode)
 
     // Priority 0 — same as game IMC so globe controls always respond.
     // (In Enhanced Input, higher number = higher priority, so 0 is the base level.
@@ -93,15 +95,12 @@ void ARGGlobePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 
     if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
     {
-        // Zoom and mouse delta work fine through Enhanced Input
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Started,    this, &ARGGlobePawn::OnDragStarted);
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Completed,  this, &ARGGlobePawn::OnDragStopped);
+        EIC->BindAction(IA_Drag,    ETriggerEvent::Canceled,   this, &ARGGlobePawn::OnDragStopped);
         EIC->BindAction(IA_Zoom,    ETriggerEvent::Triggered,  this, &ARGGlobePawn::OnZoom);
         EIC->BindAction(IA_MouseXY, ETriggerEvent::Triggered,  this, &ARGGlobePawn::OnMouseXY);
     }
-
-    // LMB drag uses legacy binding — works reliably in GameAndUI mode
-    // because it bypasses Slate's focus handling for mouse buttons.
-    PlayerInputComponent->BindAction("LeftMouseButton", IE_Pressed,  this, &ARGGlobePawn::OnDragStarted_Legacy);
-    PlayerInputComponent->BindAction("LeftMouseButton", IE_Released, this, &ARGGlobePawn::OnDragStopped_Legacy);
 }
 
 void ARGGlobePawn::Tick(float DeltaTime)
@@ -137,29 +136,16 @@ void ARGGlobePawn::Tick(float DeltaTime)
 
 void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
 {
-    bIsDragging     = true;
-    LastMouseDelta  = FVector2D::ZeroVector;
-}
-
-void ARGGlobePawn::OnDragOngoing(const FInputActionValue& /*Value*/)
-{
-    // Nothing needed here — drag state is tracked via bIsDragging in Tick
-}
-
-void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
-{
-    bIsDragging = false;
-    LastMouseDelta = FVector2D::ZeroVector;
-}
-
-// Legacy (non-Enhanced) bindings for LMB — work in GameAndUI mode
-void ARGGlobePawn::OnDragStarted_Legacy()
-{
     bIsDragging    = true;
     LastMouseDelta = FVector2D::ZeroVector;
 }
 
-void ARGGlobePawn::OnDragStopped_Legacy()
+void ARGGlobePawn::OnDragOngoing(const FInputActionValue& /*Value*/)
+{
+    // Nothing — drag tracked via bIsDragging in Tick
+}
+
+void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
 {
     bIsDragging    = false;
     LastMouseDelta = FVector2D::ZeroVector;

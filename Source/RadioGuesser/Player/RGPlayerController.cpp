@@ -29,17 +29,15 @@ void ARGPlayerController::BeginPlay()
     bGuessSubmitted = false;
 
     // ── Input mode ────────────────────────────────────────────────────────────
-    // GameAndUI + LockAlways:
-    //   • Cursor is VISIBLE — needed for GetHitResultUnderCursor + map clicking
-    //   • Mouse is locked inside the PIE viewport — no accidental editor clicks
-    //   • LMB/RMB/Wheel all fire through Enhanced Input to the game
-    //   • SetHideCursorDuringCapture(false) keeps cursor visible while dragging
+    // FInputModeGameOnly gives CapturePermanently — the only mode that works
+    // reliably in PIE. Mouse is always captured, all input goes to the game.
+    // Cursor is hidden, but mouse movement still controls SpringArm rotation.
+    // Clicking uses screen-centre raycast (no cursor position needed).
+    // Press Escape to release capture and return control to the editor.
     {
-        FInputModeGameAndUI Mode;
-        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
-        Mode.SetHideCursorDuringCapture(false);
+        FInputModeGameOnly Mode;
         SetInputMode(Mode);
-        bShowMouseCursor = true;
+        bShowMouseCursor = false;
     }
 
     // Auto-load input assets if not assigned in Blueprint defaults
@@ -148,11 +146,20 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     }
 
     FHitResult HitResult;
-    const bool bHit = GetHitResultUnderCursorByChannel(
+
+    // GameOnly mode hides the cursor, so GetHitResultUnderCursor won't work.
+    // Instead we raycast through the viewport centre — the player aims by
+    // moving the mouse (which rotates the spring arm / pans the map).
+    // When they click, we test whatever is under the screen centre.
+    int32 ViewX, ViewY;
+    GetViewportSize(ViewX, ViewY);
+    const FVector2D ScreenCentre(ViewX * 0.5f, ViewY * 0.5f);
+
+    const bool bHit = GetHitResultAtScreenPosition(
+        ScreenCentre,
         UEngineTypes::ConvertToTraceType(ECC_Visibility),
         false,
-        HitResult
-    );
+        HitResult);
 
     if (bHit && HitResult.IsValidBlockingHit())
     {

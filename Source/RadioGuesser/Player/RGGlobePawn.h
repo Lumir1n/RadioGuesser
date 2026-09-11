@@ -41,10 +41,6 @@ protected:
     void OnZoom          (const FInputActionValue& Value);
     void OnMouseXY       (const FInputActionValue& Value);
 
-    // Legacy (non-Enhanced) LMB bindings — work reliably in GameAndUI mode
-    void OnDragStarted_Legacy();
-    void OnDragStopped_Legacy();
-
     // ── Components ─────────────────────────────────────────────────────────────
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
@@ -81,6 +77,7 @@ protected:
 private:
     // Input assets (auto-loaded in BeginPlay)
     UPROPERTY() TObjectPtr<UInputMappingContext> MappingContext;
+    UPROPERTY() TObjectPtr<UInputAction>         IA_Drag;
     UPROPERTY() TObjectPtr<UInputAction>         IA_Zoom;
     UPROPERTY() TObjectPtr<UInputAction>         IA_MouseXY;
 
