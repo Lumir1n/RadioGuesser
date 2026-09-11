@@ -14,6 +14,7 @@
 #include "InputAction.h"
 #include "Engine/EngineTypes.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Player/RGGlobePawn.h"
 
 ARGPlayerController::ARGPlayerController()
 {
@@ -28,16 +29,13 @@ void ARGPlayerController::BeginPlay()
     Super::BeginPlay();
     bGuessSubmitted = false;
 
-    // ── Input mode ────────────────────────────────────────────────────────────
-    // FInputModeGameOnly gives CapturePermanently — the only mode that works
-    // reliably in PIE. Mouse is always captured, all input goes to the game.
-    // Cursor is hidden, but mouse movement still controls SpringArm rotation.
-    // Clicking uses screen-centre raycast (no cursor position needed).
-    // Press Escape to release capture and return control to the editor.
+    // Visible cursor: drag pans the globe under the pointer (Google Earth).
     {
-        FInputModeGameOnly Mode;
+        FInputModeGameAndUI Mode;
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        Mode.SetHideCursorDuringCapture(false);
         SetInputMode(Mode);
-        bShowMouseCursor = false;
+        bShowMouseCursor = true;
     }
 
     // Auto-load input assets if not assigned in Blueprint defaults
@@ -73,6 +71,15 @@ void ARGPlayerController::BeginPlay()
         break;
     }
 
+    // Subscribe to match state so guess lock resets automatically each round
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>())
+        {
+            Match->OnMatchStateChanged.AddDynamic(this, &ARGPlayerController::HandleMatchStateChanged);
+        }
+    }
+
     // Register Enhanced Input mapping context
     if (ULocalPlayer* LP = GetLocalPlayer())
     {
@@ -100,7 +107,8 @@ void ARGPlayerController::SetupInputComponent()
     {
         if (MapClickAction)
         {
-            EIC->BindAction(MapClickAction,     ETriggerEvent::Triggered,
+            // Completed = mouse release, so a drag does not place a guess.
+            EIC->BindAction(MapClickAction,     ETriggerEvent::Completed,
                 this, &ARGPlayerController::OnMapClick);
         }
         if (ConfirmGuessAction)
@@ -133,6 +141,14 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
 {
     if (bGuessSubmitted) return;
 
+    if (const ARGGlobePawn* Globe = Cast<ARGGlobePawn>(GetPawn()))
+    {
+        if (Globe->DidDragExceedClickThreshold())
+        {
+            return;
+        }
+    }
+
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
@@ -146,17 +162,7 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     }
 
     FHitResult HitResult;
-
-    // GameOnly mode hides the cursor, so GetHitResultUnderCursor won't work.
-    // Instead we raycast through the viewport centre — the player aims by
-    // moving the mouse (which rotates the spring arm / pans the map).
-    // When they click, we test whatever is under the screen centre.
-    int32 ViewX, ViewY;
-    GetViewportSize(ViewX, ViewY);
-    const FVector2D ScreenCentre(ViewX * 0.5f, ViewY * 0.5f);
-
-    const bool bHit = GetHitResultAtScreenPosition(
-        ScreenCentre,
+    const bool bHit = GetHitResultUnderCursorByChannel(
         UEngineTypes::ConvertToTraceType(ECC_Visibility),
         false,
         HitResult);
@@ -194,6 +200,16 @@ void ARGPlayerController::ConfirmGuess()
 void ARGPlayerController::ResetGuessLock()
 {
     bGuessSubmitted = false;
+}
+
+void ARGPlayerController::HandleMatchStateChanged(ERGMatchState NewState)
+{
+    // Reset guess lock whenever a new round becomes active so the player
+    // can place a fresh guess without needing a manual ResetGuessLock call.
+    if (NewState == ERGMatchState::RoundActive)
+    {
+        bGuessSubmitted = false;
+    }
 }
 
 // ─── Escape / focus toggle ────────────────────────────────────────────────────
