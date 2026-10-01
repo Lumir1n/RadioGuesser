@@ -6,6 +6,7 @@
 #include "Engine/GameInstance.h"
 #include "Components/StaticMeshComponent.h"
 #include "EngineUtils.h"
+#include "CesiumCreditSystem.h"
 #include "CesiumGeoreference.h"
 #include "Cesium3DTileset.h"
 #include "CesiumRasterOverlay.h"
@@ -129,6 +130,13 @@ void ARGCesiumMapManager::BeginPlay()
         DeferredConfigureTimer, this,
         &ARGCesiumMapManager::DeferredConfigureTileset,
         1.0f, false);
+
+    // Hide Cesium credits widget after a short delay (it spawns asynchronously)
+    FTimerHandle CreditsTimer;
+    GetWorldTimerManager().SetTimer(
+        CreditsTimer, this,
+        &ARGCesiumMapManager::HideCesiumCredits,
+        0.5f, false);
 }
 
 void ARGCesiumMapManager::Tick(float DeltaTime)
@@ -445,6 +453,31 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: WMTS overlay added (streets-v2, zoom 0-14)"));
 }
 
+void ARGCesiumMapManager::HideCesiumCredits()
+{
+    // Remove the Cesium credit/attribution widget from all viewports.
+    // This hides the "CESIUM ion" logo and the on-screen attribution bar.
+    //
+    // Note: MapTiler/OpenStreetMap attribution is still legally required —
+    // we keep it accessible in the in-game UI rather than the Cesium widget.
+    // removeCreditsFromViewports() is the only public API to hide the widget.
+    if (ACesiumCreditSystem* Credits =
+            ACesiumCreditSystem::GetDefaultCreditSystem(this))
+    {
+        Credits->removeCreditsFromViewports();
+        // Also hide the actor itself so it doesn't respawn the widget
+        Credits->SetActorHiddenInGame(true);
+        Credits->SetActorTickEnabled(false);
+        UE_LOG(LogMap, Log, TEXT("HideCesiumCredits: credit widget removed"));
+    }
+
+    // Also make sure all tileset ShowCreditsOnScreen flags are off
+    for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+    {
+        (*It)->ShowCreditsOnScreen = false;
+    }
+}
+
 void ARGCesiumMapManager::DeferredConfigureTileset()
 {
     // Re-apply settings to only the active (first, non-hidden) tileset.
@@ -542,6 +575,11 @@ void ARGCesiumMapManager::ConfigureTileset(ACesium3DTileset* Tileset)
     // ── Physics meshes ────────────────────────────────────────────────────────
     // We need physics meshes for raycasts (click-to-guess, drag-to-pan).
     Tileset->SetCreatePhysicsMeshes(true);
+
+    // ── Credits widget ────────────────────────────────────────────────────────
+    // Disable the on-screen "CESIUM ion" credit overlay on this tileset.
+    // The credit system widget is handled separately by HideCesiumCredits().
+    Tileset->ShowCreditsOnScreen = false;
 
     UE_LOG(LogMap, Log,
         TEXT("ConfigureTileset: ForbidHoles=false FogCulling=true FrustumCulling=true SSE=32"));

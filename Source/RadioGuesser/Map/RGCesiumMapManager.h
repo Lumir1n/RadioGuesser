@@ -9,6 +9,7 @@
 
 // Forward declarations
 class ACesiumGeoreference;
+class ACesiumCreditSystem;
 class ACesium3DTileset;
 class UCesiumRasterOverlay;
 class UCesiumUrlTemplateRasterOverlay;
@@ -101,6 +102,9 @@ private:
     // Called 1 second after BeginPlay to re-apply tileset settings after
     // Cesium finishes its own BeginPlay initialization.
     UFUNCTION() void DeferredConfigureTileset();
+
+    // Called 0.5 seconds after BeginPlay to hide the Cesium credits widget.
+    UFUNCTION() void HideCesiumCredits();
 
     FTimerHandle DeferredConfigureTimer;
 
