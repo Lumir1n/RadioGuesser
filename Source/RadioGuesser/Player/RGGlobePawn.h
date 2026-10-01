@@ -122,8 +122,6 @@ private:
 
     double ViewLatitude  = 30.0;
     double ViewLongitude = 20.0;
-    double AppliedOriginLatitude  = TNumericLimits<double>::Max();
-    double AppliedOriginLongitude = TNumericLimits<double>::Max();
     double GrabLatitude  = 0.0;
     double GrabLongitude = 0.0;
 
