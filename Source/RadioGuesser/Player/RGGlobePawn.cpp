@@ -18,14 +18,11 @@ namespace
 {
     constexpr double MetersPerDegreeLat = 111320.0;
 
-    double WrapLongitude(double Longitude)
+    double WrapLongitude(double Lon)
     {
-        Longitude = FMath::Fmod(Longitude + 180.0, 360.0);
-        if (Longitude < 0.0)
-        {
-            Longitude += 360.0;
-        }
-        return Longitude - 180.0;
+        Lon = FMath::Fmod(Lon + 180.0, 360.0);
+        if (Lon < 0.0) Lon += 360.0;
+        return Lon - 180.0;
     }
 }
 
@@ -36,17 +33,15 @@ ARGGlobePawn::ARGGlobePawn()
     GlobeRoot = CreateDefaultSubobject<USceneComponent>(TEXT("GlobeRoot"));
     SetRootComponent(GlobeRoot);
 
-    // SpringArm is kept at zero length so existing Blueprints still compile.
-    // Pose comes from lat/lon/height, not from orbiting the actor origin.
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(GlobeRoot);
-    SpringArm->TargetArmLength       = 0.0f;
-    SpringArm->bDoCollisionTest      = false;
-    SpringArm->bEnableCameraLag      = false;
+    SpringArm->TargetArmLength         = 0.0f;
+    SpringArm->bDoCollisionTest        = false;
+    SpringArm->bEnableCameraLag        = false;
     SpringArm->bUsePawnControlRotation = false;
-    SpringArm->bInheritPitch         = true;
-    SpringArm->bInheritYaw           = true;
-    SpringArm->bInheritRoll          = true;
+    SpringArm->bInheritPitch           = true;
+    SpringArm->bInheritYaw             = true;
+    SpringArm->bInheritRoll            = true;
     SpringArm->SetRelativeRotation(FRotator::ZeroRotator);
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -60,10 +55,10 @@ ARGGlobePawn::ARGGlobePawn()
 
     MappingContext = CreateDefaultSubobject<UInputMappingContext>(TEXT("IMC_Globe"));
 
-    IA_Drag = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeDrag"));
+    IA_Drag    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeDrag"));
     IA_Drag->ValueType = EInputActionValueType::Boolean;
 
-    IA_Zoom = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeZoom"));
+    IA_Zoom    = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeZoom"));
     IA_Zoom->ValueType = EInputActionValueType::Axis1D;
 
     IA_MouseXY = CreateDefaultSubobject<UInputAction>(TEXT("IA_GlobeMouseXY"));
@@ -79,7 +74,12 @@ void ARGGlobePawn::BeginPlay()
     Super::BeginPlay();
 
     CachedGeoreference = FindGeoreference();
-    CurrentArmLength = FMath::Clamp(CurrentArmLength, MinArmLength, MaxArmLength);
+    CurrentArmLength   = FMath::Clamp(CurrentArmLength, MinArmLength, MaxArmLength);
+
+    // Force immediate rebase on first frame
+    AppliedOriginLatitude  = TNumericLimits<double>::Max();
+    AppliedOriginLongitude = TNumericLimits<double>::Max();
+
     ApplyCameraToGlobe();
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -133,30 +133,34 @@ ACesiumGeoreference* ARGGlobePawn::FindGeoreference() const
     if (UWorld* World = GetWorld())
     {
         for (TActorIterator<ACesiumGeoreference> It(World); It; ++It)
-        {
             return *It;
-        }
     }
     return nullptr;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ApplyCameraToGlobe
+//
+// Strategy: keep Cesium origin ALWAYS at (ViewLon, ViewLat, 0).
+// This means the camera in UE space is always at (0, 0, HeightUE) — a tiny
+// number relative to the Cesium internal precision budget.  No LOD seams.
+//
+// Rebase is gated on a minimum angular delta so we don't rebuild the tile
+// tree every frame while the user is sitting still.  Once we trigger a rebase
+// we ALSO move the camera on the same frame, so both happen atomically.
+// ─────────────────────────────────────────────────────────────────────────────
 void ARGGlobePawn::ApplyCameraToGlobe()
 {
-    if (!CachedGeoreference)
-    {
-        return;
-    }
+    if (!CachedGeoreference) return;
 
-    // Keep the Unreal origin roughly under the look-at point to prevent
-    // world-bounds / far-clip issues. We rebase ONLY when the view drifts
-    // far enough AND the camera is high (so the tile-reload seam isn't visible).
-    const double DeltaLon = FMath::Abs(ViewLongitude - AppliedOriginLongitude);
-    const double DeltaLat = FMath::Abs(ViewLatitude  - AppliedOriginLatitude);
-    const bool bFarFromOrigin = (DeltaLon > 2.0 || DeltaLat > 2.0);
-    const bool bHighEnough    = (CurrentArmLength > 30000000.0f); // > 300 km
-    const bool bNeverApplied  = (AppliedOriginLongitude > 1.0e30);
+    // ── 1. Rebase origin when look-at drifted far enough ─────────────────────
+    //   Threshold: 0.5° ~ 55 km at equator.  Small enough that UE floats stay
+    //   precise; large enough that we don't rebuild tiles on every tiny pan.
+    const double dLon = FMath::Abs(WrapLongitude(ViewLongitude - AppliedOriginLongitude));
+    const double dLat = FMath::Abs(ViewLatitude  - AppliedOriginLatitude);
+    const bool bFirst = (AppliedOriginLongitude > 1.0e30);
 
-    if (bNeverApplied || (bFarFromOrigin && bHighEnough))
+    if (bFirst || dLon > 0.5 || dLat > 0.5)
     {
         CachedGeoreference->SetOriginLongitudeLatitudeHeight(
             FVector(ViewLongitude, ViewLatitude, 0.0));
@@ -164,25 +168,34 @@ void ARGGlobePawn::ApplyCameraToGlobe()
         AppliedOriginLatitude  = ViewLatitude;
     }
 
-    // Position the camera ABOVE the look-at point along the local surface normal.
-    // Using TransformLongitudeLatitudeHeightPositionToUnreal gives the correct UE
-    // world position even when the Cesium origin is not at the equator — this is
-    // what prevents the "double image / horizontal stripe" artefact that appears
-    // when SetActorLocation(0, 0, Height) is used (which only works at the equator).
-    const double HeightMeters = static_cast<double>(CurrentArmLength) * 0.01; // cm → m
-    const FVector CameraWorldPos = CachedGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
-        FVector(ViewLongitude, ViewLatitude, HeightMeters));
-    SetActorLocation(CameraWorldPos);
+    // ── 2. Place camera directly above the (now-current) origin ──────────────
+    //   After rebase, (ViewLon, ViewLat, 0) == UE origin.
+    //   One metre above that == (ViewLon, ViewLat, 1 m) in geographic space.
+    //   TransformLongitudeLatitudeHeightPositionToUnreal gives the exact UE pos.
+    //
+    //   Using height=HeightMeters puts the camera above the surface along the
+    //   true ellipsoid normal — this is what eliminates the "horizontal slice"
+    //   artefact that appeared when we used FVector(0,0,Height) in world space.
+    const double HeightM = static_cast<double>(CurrentArmLength) * 0.01; // cm→m
+    const FVector CamPos = CachedGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
+        FVector(ViewLongitude, ViewLatitude, HeightM));
+    SetActorLocation(CamPos);
 
-    // Orientation: look straight down with north at the top of the screen.
-    // In the Cesium ENU frame at the look-at origin:
-    //   East  = UE +X
-    //   South = UE +Y  (Cesium uses South, not North)
-    //   Up    = UE +Z
-    // "Look down" means -Z in UE, "north up on screen" means -Y in UE (anti-south).
+    // ── 3. Orient camera: nadir (look straight down), north up ───────────────
+    //   In Cesium's ENU frame: East=+X, South=+Y, Up=+Z.
+    //   "Look straight down" in ENU = forward along -Up = (0, 0, -1).
+    //   "Screen-up = north"  in ENU = up along -South = (0, -1, 0).
+    //   TransformEastSouthUpRotatorToUnreal converts this to Unreal world space
+    //   correctly for any lat/lon (including high latitudes and poles).
+    const FRotator EsuNadirNorthUp = FRotationMatrix::MakeFromXZ(
+        FVector(0.0, 0.0, -1.0),   // forward = -Up (nadir)
+        FVector(0.0, -1.0, 0.0)    // up = -South (north)
+    ).Rotator();
     SetActorRotation(
-        FRotationMatrix::MakeFromXZ(FVector::DownVector, FVector(0.0f, -1.0f, 0.0f)).Rotator());
+        CachedGeoreference->TransformEastSouthUpRotatorToUnreal(EsuNadirNorthUp, CamPos));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void ARGGlobePawn::ApplyDragPan()
 {
@@ -202,22 +215,18 @@ void ARGGlobePawn::ApplyDragPan()
     if (bGotCursor)
     {
         if (bHaveCursorPos)
-        {
             Delta = CursorPos - LastCursorPos;
-        }
         LastCursorPos  = CursorPos;
         bHaveCursorPos = true;
     }
 
     TotalDragPixels += Delta.Size();
     if (TotalDragPixels >= ClickDragThreshold)
-    {
         bDragExceededThreshold = true;
-    }
 
     const float NsScale = GetNorthSouthPanScale();
 
-    // Grab-to-cursor: the geographic point picked on press stays under the cursor.
+    // Grab-to-cursor: the geo-point under the cursor at drag-start follows it.
     if (bHasGrabPoint)
     {
         FHitResult Hit;
@@ -227,10 +236,11 @@ void ARGGlobePawn::ApplyDragPan()
         if (bHit && Hit.bBlockingHit)
         {
             const FVector HitLLH =
-                CachedGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(
-                    Hit.ImpactPoint);
+                CachedGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(Hit.ImpactPoint);
 
+            // Longitude: keep the grab point under the cursor (no scale)
             ViewLongitude = WrapLongitude(ViewLongitude + (GrabLongitude - HitLLH.X));
+            // Latitude:  scale by NsScale (fade out N/S drag at globe view)
             ViewLatitude  = FMath::Clamp(
                 ViewLatitude + (HitLLH.Y - GrabLatitude) * static_cast<double>(NsScale),
                 -static_cast<double>(MaxAbsLatitude),
@@ -239,32 +249,24 @@ void ARGGlobePawn::ApplyDragPan()
         }
     }
 
-    if (Delta.IsNearlyZero())
-    {
-        return;
-    }
+    if (Delta.IsNearlyZero()) return;
 
-    int32 SizeX = 1920;
-    int32 SizeY = 1080;
+    // Fallback: pixel-to-meter drag when no surface hit is available
+    int32 SizeX = 1920, SizeY = 1080;
     PC->GetViewportSize(SizeX, SizeY);
-    (void)SizeX;
     SizeY = FMath::Max(SizeY, 1);
 
-    const float VerticalFovDeg = Camera ? Camera->FieldOfView : 90.0f;
-    const double HalfFovRad = FMath::DegreesToRadians(VerticalFovDeg * 0.5);
-    const double MetersPerPixel =
-        (2.0 * GetViewHeightMeters() * FMath::Tan(HalfFovRad)) / static_cast<double>(SizeY);
+    const double HalfFovRad    = FMath::DegreesToRadians((Camera ? Camera->FieldOfView : 60.0f) * 0.5);
+    const double MetersPerPixel = (2.0 * GetViewHeightMeters() * FMath::Tan(HalfFovRad))
+                                  / static_cast<double>(SizeY);
 
-    // Visible cursor: dragging the globe moves it with the mouse (Google Maps).
-    const double EastMeters  = -static_cast<double>(Delta.X) * MetersPerPixel;
-    const double NorthMeters = static_cast<double>(Delta.Y) * MetersPerPixel * NsScale;
-    PanByMeters(EastMeters, NorthMeters);
+    PanByMeters(-static_cast<double>(Delta.X) * MetersPerPixel,
+                 static_cast<double>(Delta.Y) * MetersPerPixel * NsScale);
 }
 
 void ARGGlobePawn::PanByMeters(double EastMeters, double NorthMeters)
 {
-    const double CosLat = FMath::Max(
-        0.05,
+    const double CosLat = FMath::Max(0.05,
         FMath::Abs(FMath::Cos(FMath::DegreesToRadians(ViewLatitude))));
 
     ViewLatitude = FMath::Clamp(
@@ -272,18 +274,18 @@ void ARGGlobePawn::PanByMeters(double EastMeters, double NorthMeters)
         -static_cast<double>(MaxAbsLatitude),
         static_cast<double>(MaxAbsLatitude));
 
-    ViewLongitude = WrapLongitude(ViewLongitude + EastMeters / (MetersPerDegreeLat * CosLat));
+    ViewLongitude = WrapLongitude(
+        ViewLongitude + EastMeters / (MetersPerDegreeLat * CosLat));
 }
 
 float ARGGlobePawn::GetNorthSouthPanScale() const
 {
-    const float Span = FMath::Max(1.0f, PlanetViewFullHeight - PlanetViewStartHeight);
-    const float Alpha = FMath::Clamp(
-        (CurrentArmLength - PlanetViewStartHeight) / Span,
-        0.0f,
-        1.0f);
+    const float Span  = FMath::Max(1.0f, PlanetViewFullHeight - PlanetViewStartHeight);
+    const float Alpha = FMath::Clamp((CurrentArmLength - PlanetViewStartHeight) / Span, 0.0f, 1.0f);
     return 1.0f - Alpha;
 }
+
+// ─── Input ───────────────────────────────────────────────────────────────────
 
 void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
 {
@@ -295,25 +297,21 @@ void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
     bHaveCursorPos         = false;
 
     APlayerController* PC = Cast<APlayerController>(GetController());
-    if (!PC || !CachedGeoreference)
-    {
-        return;
-    }
+    if (!PC || !CachedGeoreference) return;
 
     if (PC->GetMousePosition(LastCursorPos.X, LastCursorPos.Y))
-    {
         bHaveCursorPos = true;
-    }
 
+    // Try to record the geographic grab point for grab-to-cursor panning
     FHitResult Hit;
     if (PC->GetHitResultUnderCursorByChannel(
-            UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit) && Hit.bBlockingHit)
+            UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit)
+        && Hit.bBlockingHit)
     {
-        const FVector GrabLLH =
-            CachedGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(
-                Hit.ImpactPoint);
-        GrabLongitude = GrabLLH.X;
-        GrabLatitude  = GrabLLH.Y;
+        const FVector LLH =
+            CachedGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(Hit.ImpactPoint);
+        GrabLongitude = LLH.X;
+        GrabLatitude  = LLH.Y;
         bHasGrabPoint = true;
     }
 }
@@ -328,12 +326,9 @@ void ARGGlobePawn::OnDragStopped(const FInputActionValue& /*Value*/)
 
 void ARGGlobePawn::OnZoom(const FInputActionValue& Value)
 {
-    const float Axis = Value.Get<float>();
+    const float Axis      = Value.Get<float>();
     const float ZoomDelta = CurrentArmLength * 0.15f * Axis;
-    CurrentArmLength = FMath::Clamp(
-        CurrentArmLength - ZoomDelta,
-        MinArmLength,
-        MaxArmLength);
+    CurrentArmLength = FMath::Clamp(CurrentArmLength - ZoomDelta, MinArmLength, MaxArmLength);
 }
 
 void ARGGlobePawn::OnMouseXY(const FInputActionValue& Value)
@@ -341,37 +336,25 @@ void ARGGlobePawn::OnMouseXY(const FInputActionValue& Value)
     LastMouseDelta = Value.Get<FVector2D>();
 }
 
+// ─── WASD ─────────────────────────────────────────────────────────────────────
+
 void ARGGlobePawn::MoveForward(float Value)
 {
-    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER)
-    {
-        return;
-    }
-
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
     const float NsScale = GetNorthSouthPanScale();
-    if (NsScale <= KINDA_SMALL_NUMBER)
-    {
-        return;
-    }
-
+    if (NsScale <= KINDA_SMALL_NUMBER) return;
     const float Dt = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
-    const double NorthMeters =
-        static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt * NsScale;
-    PanByMeters(0.0, NorthMeters);
+    PanByMeters(0.0, static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt * NsScale);
 }
 
 void ARGGlobePawn::MoveRight(float Value)
 {
-    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER)
-    {
-        return;
-    }
-
+    if (FMath::Abs(Value) < KINDA_SMALL_NUMBER) return;
     const float Dt = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
-    const double EastMeters =
-        static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt;
-    PanByMeters(EastMeters, 0.0);
+    PanByMeters(static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt, 0.0);
 }
+
+// ─── Focus after round result ─────────────────────────────────────────────────
 
 void ARGGlobePawn::FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate Actual, float DistanceKm)
 {
@@ -382,15 +365,9 @@ void ARGGlobePawn::FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate A
 
     double LonA = Guess.Longitude;
     double LonB = Actual.Longitude;
-    double DLon = LonB - LonA;
-    if (DLon > 180.0)
-    {
-        LonB -= 360.0;
-    }
-    else if (DLon < -180.0)
-    {
-        LonB += 360.0;
-    }
+    const double DLon = LonB - LonA;
+    if      (DLon >  180.0) LonB -= 360.0;
+    else if (DLon < -180.0) LonB += 360.0;
     ViewLongitude = WrapLongitude((LonA + LonB) * 0.5);
 
     const float HeightKm = FMath::Clamp(FMath::Max(DistanceKm * 2.0f, 400.0f), 400.0f, 20000.0f);
