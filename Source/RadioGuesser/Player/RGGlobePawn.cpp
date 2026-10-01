@@ -13,28 +13,25 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/EngineTypes.h"
 #include "CesiumGeoreference.h"
+#include "CesiumOriginShiftComponent.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Globe camera — architecture overview
+// Architecture
 //
-// We NEVER call SetOriginLongitudeLatitudeHeight after BeginPlay.
-// Constantly rebasing Cesium's world origin causes the tile tree to reload,
-// which manifests as two continents appearing on top of each other.
+// UCesiumOriginShiftComponent (mode = ChangeCesiumGeoreference) is attached to
+// this pawn.  Each tick it moves the CesiumGeoreference origin to be directly
+// below the pawn in geographic space.  This is identical to what Cesium's own
+// GlobeAwareDefaultPawn does and is the only correct way to avoid the
+// duplicate-continent / horizontal-slice artefact.
 //
-// Instead:
-//   • Origin is fixed at (lon=0, lat=0, h=0) (prime meridian / equator).
-//   • The camera position is computed frame-by-frame via:
-//       TransformLongitudeLatitudeHeightPositionToUnreal(ViewLon, ViewLat, H)
-//     This works across the whole globe because Cesium stores its coordinate
-//     frame relative to the fixed origin, not relative to a moving look-at.
-//   • Drag panning updates ViewLat/ViewLon in geographic space (degrees).
-//   • Zoom changes CurrentArmLength (height above ellipsoid in cm).
+// Because the origin always stays under the camera:
+//   • Camera UE position ≈ (0, 0, HeightUE) — small number, full float precision
+//   • No manual SetOriginLongitudeLatitudeHeight calls anywhere
+//   • Tile LOD selection is stable
 //
-// Why this works: The UE floating-point precision issue only matters if the
-// camera world position is hundreds of thousands of km from UE origin in
-// metres. At our altitudes (100 km – 30 000 km), the ECEF position of any
-// point on Earth is within ~50 000 km of UE origin — perfectly representable
-// in single-precision float (precision ~4 m at that distance, fine for tiles).
+// Camera position is set by:
+//   TransformLongitudeLatitudeHeightPositionToUnreal(ViewLon, ViewLat, H)
+// which returns the correct UE world position above the ellipsoid surface normal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace
@@ -65,12 +62,16 @@ ARGGlobePawn::ARGGlobePawn()
     SpringArm->bInheritPitch           = true;
     SpringArm->bInheritYaw             = true;
     SpringArm->bInheritRoll            = true;
-    SpringArm->SetRelativeRotation(FRotator::ZeroRotator);
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
     Camera->bUsePawnControlRotation = false;
     Camera->SetFieldOfView(60.0f);
+
+    // Cesium origin-shift component — keeps the georeference origin directly
+    // below the pawn so UE floating-point precision stays good everywhere.
+    OriginShift = CreateDefaultSubobject<UCesiumOriginShiftComponent>(TEXT("OriginShift"));
+    OriginShift->SetMode(ECesiumOriginShiftMode::ChangeCesiumGeoreference);
 
     bUseControllerRotationPitch = false;
     bUseControllerRotationYaw   = false;
@@ -99,14 +100,7 @@ void ARGGlobePawn::BeginPlay()
     CachedGeoreference = FindGeoreference();
     CurrentArmLength   = FMath::Clamp(CurrentArmLength, MinArmLength, MaxArmLength);
 
-    // ── Fix Cesium origin at the prime meridian / equator — ONCE, never again.
-    // All subsequent camera positioning is done by computing UE world coords
-    // from geographic coords, without ever changing this origin.
-    if (CachedGeoreference)
-    {
-        CachedGeoreference->SetOriginLongitudeLatitudeHeight(FVector(0.0, 0.0, 0.0));
-    }
-
+    // Position the camera immediately — OriginShift will follow from there.
     ApplyCameraToGlobe();
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -143,14 +137,10 @@ void ARGGlobePawn::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     if (!CachedGeoreference)
-    {
         CachedGeoreference = FindGeoreference();
-    }
 
     if (bIsDragging)
-    {
         ApplyDragPan();
-    }
 
     ApplyCameraToGlobe();
 }
@@ -158,10 +148,8 @@ void ARGGlobePawn::Tick(float DeltaTime)
 ACesiumGeoreference* ARGGlobePawn::FindGeoreference() const
 {
     if (UWorld* World = GetWorld())
-    {
         for (TActorIterator<ACesiumGeoreference> It(World); It; ++It)
             return *It;
-    }
     return nullptr;
 }
 
@@ -169,26 +157,35 @@ void ARGGlobePawn::ApplyCameraToGlobe()
 {
     if (!CachedGeoreference) return;
 
-    // Compute the UE world position of the camera directly from geographic coords.
-    // No origin rebase — the georeference is fixed at (0,0,0).
+    // ── Camera world position: above the look-at point along ellipsoid normal ──
+    // TransformLongitudeLatitudeHeightPositionToUnreal is always correct because
+    // Cesium stores ECEF coordinates internally and transforms them to Unreal
+    // space using the current georeference origin.  OriginShift keeps that
+    // origin moving under us, so this position is always a small vector in
+    // UE space — perfect floating-point precision.
     const double HeightM = static_cast<double>(CurrentArmLength) * 0.01; // cm → m
     const FVector CamPos = CachedGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
         FVector(ViewLongitude, ViewLatitude, HeightM));
     SetActorLocation(CamPos);
 
-    // Orient the camera to look straight down (nadir) with north at screen top.
-    // In Cesium's ENU frame at any surface point:
-    //   East  = local +X,  South = local +Y,  Up = local +Z
-    // "Nadir" (straight down) = forward along -Up in ENU = (0, 0, -1) in ENU.
-    // "North at top"          = screen-up along -South in ENU = (0, -1, 0) in ENU.
-    // TransformEastSouthUpRotatorToUnreal converts this to UE world rotation
-    // correctly for any latitude/longitude.
-    const FRotator EsuNadirNorthUp = FRotationMatrix::MakeFromXZ(
-        FVector(0.0, 0.0, -1.0),  // forward = -Up (nadir)
-        FVector(0.0, -1.0, 0.0)   // screen-up = -South (north)
+    // ── Camera orientation: nadir view, north up ──────────────────────────────
+    // In the ENU (East-North-Up) frame at the surface point below the camera:
+    //   East = +X,  North = +Y,  Up = +Z
+    // Cesium uses East-South-Up (ESU), where South = -North, so:
+    //   East = +X,  South = +Y,  Up = +Z
+    //
+    // "Look straight down" in ESU: forward = -Up = (0, 0, -1) in ESU.
+    // "North at top of screen" in ESU: screen-up = -South = (0, -1, 0) in ESU.
+    //
+    // TransformEastSouthUpRotatorToUnreal converts this ESU rotation to UE
+    // world space correctly for any lat/lon, including poles and antimeridian.
+    const FRotator ESUNadirNorthUp = FRotationMatrix::MakeFromXZ(
+        FVector(0.0,  0.0, -1.0),   // forward  = -Up    (nadir)
+        FVector(0.0, -1.0,  0.0)    // screen-up = -South (north)
     ).Rotator();
+
     SetActorRotation(
-        CachedGeoreference->TransformEastSouthUpRotatorToUnreal(EsuNadirNorthUp, CamPos));
+        CachedGeoreference->TransformEastSouthUpRotatorToUnreal(ESUNadirNorthUp, CamPos));
 }
 
 void ARGGlobePawn::ApplyDragPan()
@@ -220,15 +217,15 @@ void ARGGlobePawn::ApplyDragPan()
 
     const float NsScale = GetNorthSouthPanScale();
 
-    // ── Primary: grab-to-cursor.
-    // Record a geographic point on LMB press; keep it under the cursor while dragging.
+    // ── Primary: grab-to-cursor pan ───────────────────────────────────────────
+    // On LMB press we record the geographic point under the cursor.
+    // Each drag tick we keep that point under the cursor.
     if (bHasGrabPoint)
     {
         FHitResult Hit;
-        const bool bHit = PC->GetHitResultUnderCursorByChannel(
-            UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit);
-
-        if (bHit && Hit.bBlockingHit)
+        if (PC->GetHitResultUnderCursorByChannel(
+                UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit)
+            && Hit.bBlockingHit)
         {
             const FVector HitLLH =
                 CachedGeoreference->TransformUnrealPositionToLongitudeLatitudeHeight(Hit.ImpactPoint);
@@ -244,7 +241,7 @@ void ARGGlobePawn::ApplyDragPan()
 
     if (Delta.IsNearlyZero()) return;
 
-    // ── Fallback: pixel-delta pan (used when the cursor misses the terrain mesh).
+    // ── Fallback: pixel-delta pan (cursor missed terrain mesh) ───────────────
     int32 SizeX = 1920, SizeY = 1080;
     PC->GetViewportSize(SizeX, SizeY);
     SizeY = FMath::Max(SizeY, 1);
@@ -278,7 +275,7 @@ float ARGGlobePawn::GetNorthSouthPanScale() const
     return 1.0f - Alpha;
 }
 
-// ─── Input ───────────────────────────────────────────────────────────────────
+// ─── Input ────────────────────────────────────────────────────────────────────
 
 void ARGGlobePawn::OnDragStarted(const FInputActionValue& /*Value*/)
 {
@@ -336,7 +333,8 @@ void ARGGlobePawn::MoveForward(float Value)
     const float NsScale = GetNorthSouthPanScale();
     if (NsScale <= KINDA_SMALL_NUMBER) return;
     const float Dt = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
-    PanByMeters(0.0, static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt * NsScale);
+    PanByMeters(0.0,
+        static_cast<double>(Value) * KeyboardPanSpeed * GetViewHeightMeters() * Dt * NsScale);
 }
 
 void ARGGlobePawn::MoveRight(float Value)
@@ -355,8 +353,7 @@ void ARGGlobePawn::FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate A
         -static_cast<double>(MaxAbsLatitude),
         static_cast<double>(MaxAbsLatitude));
 
-    double LonA = Guess.Longitude;
-    double LonB = Actual.Longitude;
+    double LonA = Guess.Longitude, LonB = Actual.Longitude;
     const double DLon = LonB - LonA;
     if      (DLon >  180.0) LonB -= 360.0;
     else if (DLon < -180.0) LonB += 360.0;

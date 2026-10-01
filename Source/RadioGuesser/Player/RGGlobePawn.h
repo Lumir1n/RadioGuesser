@@ -8,6 +8,7 @@
 #include "RGGlobePawn.generated.h"
 
 class ACesiumGeoreference;
+class UCesiumOriginShiftComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class UInputMappingContext;
@@ -15,15 +16,16 @@ class UInputAction;
 struct FInputActionValue;
 
 /**
- * ARGGlobePawn — north-up globe camera (Google Earth / Google Maps).
+ * ARGGlobePawn — north-up globe camera, Google Earth style.
  *
- * The camera sits above a geographic look-at (lat/lon) and always looks
- * straight down with north at the top of the screen. It never orbits a
- * world-space point.
+ * Uses UCesiumOriginShiftComponent (ChangeCesiumGeoreference mode) to keep
+ * the UE world origin under the camera at all times.  This is the same
+ * mechanism Cesium's own GlobeAwareDefaultPawn uses, so tile LODs stay
+ * stable and there are no duplicate-continent artefacts.
  *
- * Far out (whole planet): left/right drag spins Earth around its polar axis.
- *                         Up/down drag is locked — you cannot flip the globe.
- * Zoomed in: drag pans north/south/east/west over the surface.
+ * The camera always looks straight down with north at the top of screen.
+ * Drag pans the view in geographic space (lat/lon).
+ * Scroll wheel zooms (height above ellipsoid).
  */
 UCLASS()
 class RADIOGUESSER_API ARGGlobePawn : public APawn
@@ -33,7 +35,7 @@ class RADIOGUESSER_API ARGGlobePawn : public APawn
 public:
     ARGGlobePawn();
 
-    /** True if the current LMB press moved further than a click. */
+    /** True if the current LMB press moved further than a click threshold. */
     UFUNCTION(BlueprintPure, Category = "Globe|Input")
     bool DidDragExceedClickThreshold() const { return bDragExceededThreshold; }
 
@@ -54,6 +56,7 @@ protected:
     void MoveForward(float Value);
     void MoveRight  (float Value);
 
+    // ── Components ─────────────────────────────────────────────────────────────
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<USceneComponent> GlobeRoot;
 
@@ -63,18 +66,14 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<UCameraComponent> Camera;
 
-    /** Unused leftover — pan speed is derived from camera height. */
-    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PanScale = 0.003f;
+    /** Drives automatic Cesium origin rebasing as the camera moves. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    TObjectPtr<UCesiumOriginShiftComponent> OriginShift;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float ZoomSpeed = 500000.0f;
-
-    /** Minimum camera height above ellipsoid, in centimetres. */
+    // ── Tuning ─────────────────────────────────────────────────────────────────
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float MinArmLength = 10000000.0f;   // 100 km
 
-    /** Maximum camera height above ellipsoid, in centimetres. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float MaxArmLength = 3000000000.0f; // 30 000 km
 
@@ -84,18 +83,14 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float ClickDragThreshold = 8.0f;
 
+    /** Height (cm) where N/S pan starts fading out at planet view. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float RotationSpeed = 0.15f;
+    float PlanetViewStartHeight = 800000000.0f;
 
-    /** Height (cm) where north/south pan starts fading out. */
+    /** Height (cm) where only E/W spin remains. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PlanetViewStartHeight = 800000000.0f;  // 8 000 km
+    float PlanetViewFullHeight = 1800000000.0f;
 
-    /** Height (cm) where only polar-axis spin remains. */
-    UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PlanetViewFullHeight = 1800000000.0f; // 18 000 km
-
-    /** Clamp so ESU frame does not degenerate at the poles. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float MaxAbsLatitude = 85.0f;
 
@@ -114,18 +109,18 @@ private:
     UPROPERTY() TObjectPtr<UInputAction>         IA_Zoom;
     UPROPERTY() TObjectPtr<UInputAction>         IA_MouseXY;
 
-    bool  bIsDragging              = false;
-    bool  bDragExceededThreshold   = false;
-    bool  bHasGrabPoint            = false;
-    float TotalDragPixels          = 0.0f;
-    float CurrentArmLength         = 500000000.0f; // 5 000 km
+    bool  bIsDragging            = false;
+    bool  bDragExceededThreshold = false;
+    bool  bHasGrabPoint          = false;
+    float TotalDragPixels        = 0.0f;
+    float CurrentArmLength       = 500000000.0f; // 5 000 km start
 
     double ViewLatitude  = 30.0;
     double ViewLongitude = 20.0;
     double GrabLatitude  = 0.0;
     double GrabLongitude = 0.0;
 
-    FVector2D LastMouseDelta  = FVector2D::ZeroVector;
-    FVector2D LastCursorPos   = FVector2D::ZeroVector;
-    bool      bHaveCursorPos  = false;
+    FVector2D LastMouseDelta = FVector2D::ZeroVector;
+    FVector2D LastCursorPos  = FVector2D::ZeroVector;
+    bool      bHaveCursorPos = false;
 };
