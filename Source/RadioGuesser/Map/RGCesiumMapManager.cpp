@@ -10,6 +10,7 @@
 #include "Cesium3DTileset.h"
 #include "CesiumRasterOverlay.h"
 #include "CesiumUrlTemplateRasterOverlay.h"
+#include "CesiumWebMapTileServiceRasterOverlay.h"
 #include "GameFramework/WorldSettings.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/SkyLight.h"
@@ -23,6 +24,21 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/RGGlobePawn.h"
+
+// MapTiler API key — shared key used for both terrain and map tiles.
+// Free tier: 100 000 tiles/month — plenty for development.
+static const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
+
+// MapTiler terrain tileset JSON — quantized-mesh format, same as Cesium World
+// Terrain but served by MapTiler. No Cesium ion watermark.
+static const FString MapTilerTerrainUrl =
+    TEXT("https://api.maptiler.com/tiles/terrain-quantized-mesh-v2/tiles.json?key=Gyf1PzWCtsfSGE86susz");
+
+// MapTiler streets-v2 WMTS URL template used for the raster overlay.
+// {TileMatrix}/{TileCol}/{TileRow} — WMTS convention (same zoom/x/y as XYZ
+// but named differently). Cesium's WMTS overlay handles these automatically.
+static const FString MapTilerWmtsUrl =
+    TEXT("https://api.maptiler.com/maps/streets-v2/{TileMatrix}/{TileCol}/{TileRow}.jpg?key=Gyf1PzWCtsfSGE86susz");
 
 ARGCesiumMapManager::ARGCesiumMapManager()
 {
@@ -351,11 +367,11 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
     }
 }
 
-// ─── MapTiler overlay ─────────────────────────────────────────────────────────
+// ─── MapTiler terrain + overlay setup ────────────────────────────────────────
 
 void ARGCesiumMapManager::AddMapTilerOverlay()
 {
-    // Find Cesium World Terrain tileset in the level
+    // Get the active tileset (first one — extras are hidden in BeginPlay).
     ACesium3DTileset* Tileset = nullptr;
     for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
     {
@@ -365,71 +381,68 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
     if (!Tileset)
     {
-        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: No ACesium3DTileset found in level."));
+        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: No ACesium3DTileset found."));
         return;
     }
 
-    // ── Step 1: Remove ALL existing raster overlay components from the tileset.
-    //    This kills the Bing Maps overlay (and any others) that were saved in
-    //    the .umap file. Without this step they fire "Could not parse web map
-    //    service XML" on every load and the Bing Maps watermark stays visible.
+    // ── Step 1: Switch terrain source from Cesium ion → MapTiler ─────────────
+    // SetTilesetSource + SetUrl replaces the Cesium ion terrain (Asset ID 1)
+    // with MapTiler's quantized-mesh terrain served from their CDN.
+    // This eliminates the "CESIUM ion" watermark entirely.
+    Tileset->SetTilesetSource(ETilesetSource::FromUrl);
+    Tileset->SetUrl(MapTilerTerrainUrl);
+
+    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Tileset switched to MapTiler terrain URL"));
+
+    // ── Step 2: Remove all existing raster overlays ───────────────────────────
+    // The Bing Maps / Cesium ion overlays saved in the .umap must be removed
+    // before we add ours; otherwise old overlays fire XML parse errors.
     {
         TArray<UCesiumRasterOverlay*> ExistingOverlays;
         Tileset->GetComponents<UCesiumRasterOverlay>(ExistingOverlays);
-
         for (UCesiumRasterOverlay* OldOverlay : ExistingOverlays)
         {
-            UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Removing old overlay '%s'"),
-                *OldOverlay->GetName());
             OldOverlay->Deactivate();
             OldOverlay->DestroyComponent();
         }
-        UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Removed %d existing overlay(s)"),
+        UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: Removed %d old overlay(s)"),
             ExistingOverlays.Num());
     }
 
-    // ── Step 2: Add MapTiler Streets-v2 raster tiles.
-    //    streets-v2 is colourful and cartoonish with strong country borders —
-    //    much more game-like than basic-v2.
-    //
-    //    URL format: /maps/{style}/256/{z}/{x}/{y}.png
-    //    MaximumLevel = 14: MapTiler raster tiles top out at zoom 14 for most
-    //    styles. Allowing higher values causes Cesium to request non-existent
-    //    tiles which return blank/error images and look like blurry patches.
-    const FString MapTilerKey = TEXT("Gyf1PzWCtsfSGE86susz");
-    const FString TileUrl = FString::Printf(
-        TEXT("https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=%s"),
-        *MapTilerKey);
-
-    UCesiumUrlTemplateRasterOverlay* Overlay =
-        NewObject<UCesiumUrlTemplateRasterOverlay>(
+    // ── Step 3: Add MapTiler streets-v2 via WMTS raster overlay ──────────────
+    // MapTiler documentation recommends WMTS for Cesium for Unreal.
+    // streets-v2 — colourful cartoonish style, strong country borders.
+    UCesiumWebMapTileServiceRasterOverlay* Overlay =
+        NewObject<UCesiumWebMapTileServiceRasterOverlay>(
             Tileset,
-            UCesiumUrlTemplateRasterOverlay::StaticClass(),
-            TEXT("MapTilerOverlay"));
+            UCesiumWebMapTileServiceRasterOverlay::StaticClass(),
+            TEXT("MapTilerWmtsOverlay"));
 
     if (!Overlay)
     {
-        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: Failed to create overlay object."));
+        UE_LOG(LogMap, Warning, TEXT("AddMapTilerOverlay: Failed to create WMTS overlay."));
         return;
     }
 
-    Overlay->TemplateUrl = TileUrl;
-
-    // XYZ/Slippy Map convention: y=0 = northernmost tile — matches Cesium WebMercator.
-    Overlay->Projection   = ECesiumUrlTemplateRasterOverlayProjection::WebMercator;
-    Overlay->TileWidth    = 256;
-    Overlay->TileHeight   = 256;
-    Overlay->MinimumLevel = 0;
-    Overlay->MaximumLevel = 14;  // streets-v2 raster caps at zoom 14
-    Overlay->bAutoActivate = true;
+    // BaseUrl contains the full template including {TileMatrix}/{TileCol}/{TileRow}
+    Overlay->BaseUrl    = MapTilerWmtsUrl;
+    Overlay->Layer      = TEXT("");      // not needed for template-style URLs
+    Overlay->Style      = TEXT("");
+    Overlay->Format     = TEXT("image/jpeg");
+    Overlay->TileMatrixSetID    = TEXT("");
+    Overlay->Projection = ECesiumWebMapTileServiceRasterOverlayProjection::WebMercator;
+    Overlay->bSpecifyZoomLevels = true;
+    Overlay->MinimumLevel       = 0;
+    Overlay->MaximumLevel       = 14;   // streets-v2 raster tiles cap at zoom 14
+    Overlay->TileWidth          = 256;
+    Overlay->TileHeight         = 256;
+    Overlay->bAutoActivate      = true;
     Overlay->RegisterComponent();
     Tileset->AddInstanceComponent(Overlay);
 
-    // Force the tileset to reload so newly added overlay is applied to all
-    // tiles that were already loaded before BeginPlay ran.
     Tileset->RefreshTileset();
 
-    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
+    UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: WMTS overlay added (streets-v2, zoom 0-14)"));
 }
 
 void ARGCesiumMapManager::DeferredConfigureTileset()
