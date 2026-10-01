@@ -108,18 +108,18 @@ void ARGPlayerController::SetupInputComponent()
 
     if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(InputComponent))
     {
-        if (MapClickAction)
-        {
-            // Completed = mouse release, so a drag does not place a guess.
-            EIC->BindAction(MapClickAction,     ETriggerEvent::Completed,
-                this, &ARGPlayerController::OnMapClick);
-        }
         if (ConfirmGuessAction)
         {
             EIC->BindAction(ConfirmGuessAction, ETriggerEvent::Triggered,
                 this, &ARGPlayerController::OnConfirmGuess);
         }
     }
+
+    // Use legacy input binding for LMB release — Enhanced Input conflicts with
+    // the pawn's IA_GlobeDrag action which also listens on LMB.
+    // IE_Released fires after the pawn's drag handler, so we still get the event.
+    InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this,
+        &ARGPlayerController::OnMapClickLegacy);
 
     // Bind Escape through the old input system (reliable in PIE, no IMC needed)
     InputComponent->BindKey(EKeys::Escape, IE_Pressed, this,
@@ -128,7 +128,7 @@ void ARGPlayerController::SetupInputComponent()
 
 // ─── Input handlers ───────────────────────────────────────────────────────────
 
-void ARGPlayerController::OnMapClick(const FInputActionValue& /*Value*/)
+void ARGPlayerController::OnMapClickLegacy()
 {
     TryPlaceGuessAtCursor();
 }

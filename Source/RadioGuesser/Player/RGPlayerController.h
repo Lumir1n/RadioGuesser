@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "Map/RGMapSubsystem.h"
+#include "Match/RGMatchSubsystem.h"
 #include "RGPlayerController.generated.h"
 
 class UInputMappingContext;
@@ -67,8 +68,11 @@ protected:
     virtual void OnEscapePressed();
 
 private:
-    void OnMapClick    (const FInputActionValue& Value);
+    // Legacy LMB release binding (avoids conflict with pawn's Enhanced Input drag)
+    void OnMapClickLegacy();
     void OnConfirmGuess(const FInputActionValue& Value);
+
+    UFUNCTION() void HandleMatchStateChanged(ERGMatchState NewState);
 
     /** Cached at BeginPlay — avoids TActorIterator every click */
     UPROPERTY() TObjectPtr<ARGCesiumMapManager> CachedMapManager;
