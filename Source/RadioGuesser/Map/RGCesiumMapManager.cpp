@@ -72,20 +72,36 @@ void ARGCesiumMapManager::BeginPlay()
         }
     }
 
-    // Configure ALL Cesium3DTilesets in the level (there may be more than one).
-    // Only the first one gets our MapTiler overlay, but all must have correct
-    // rendering settings to prevent duplicate-continent artefacts.
+    // Find all Cesium3DTilesets. Keep exactly ONE (the first with terrain/world data),
+    // hide all others. Multiple active tilesets cause the duplicate-continent artifact
+    // (two separate LOD layers rendered at the same time).
     {
         TArray<ACesium3DTileset*> AllTilesets;
         for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
             AllTilesets.Add(*It);
 
-        UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found %d tileset(s) in level"), AllTilesets.Num());
+        UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found %d tileset(s) in level — keeping first, hiding rest"),
+            AllTilesets.Num());
 
-        for (ACesium3DTileset* T : AllTilesets)
+        for (int32 i = 0; i < AllTilesets.Num(); ++i)
         {
-            ConfigureTileset(T);
-            T->RefreshTileset();
+            ACesium3DTileset* T = AllTilesets[i];
+            if (i == 0)
+            {
+                // This is our primary tileset — configure and keep visible.
+                T->SetActorHiddenInGame(false);
+                T->SetActorEnableCollision(true);
+                ConfigureTileset(T);
+                T->RefreshTileset();
+            }
+            else
+            {
+                // Extra tilesets cause duplicate rendering — hide them completely.
+                T->SetActorHiddenInGame(true);
+                T->SetActorEnableCollision(false);
+                T->SuspendUpdate = true;
+                UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Hiding extra tileset '%s'"), *T->GetName());
+            }
         }
     }
     AddMapTilerOverlay();
@@ -418,13 +434,29 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
 
 void ARGCesiumMapManager::DeferredConfigureTileset()
 {
-    // Re-apply tileset settings after Cesium's own initialization, for ALL tilesets.
+    // Re-apply settings to only the active (first, non-hidden) tileset.
+    // Also re-hide any extras in case they got re-enabled somehow.
+    TArray<ACesium3DTileset*> AllTilesets;
     for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+        AllTilesets.Add(*It);
+
+    for (int32 i = 0; i < AllTilesets.Num(); ++i)
     {
-        ConfigureTileset(*It);
-        (*It)->RefreshTileset();
+        ACesium3DTileset* T = AllTilesets[i];
+        if (i == 0)
+        {
+            T->SetActorHiddenInGame(false);
+            ConfigureTileset(T);
+            T->RefreshTileset();
+        }
+        else
+        {
+            T->SetActorHiddenInGame(true);
+            T->SetActorEnableCollision(false);
+            T->SuspendUpdate = true;
+        }
     }
-    UE_LOG(LogMap, Log, TEXT("DeferredConfigureTileset: settings re-applied to all tilesets"));
+    UE_LOG(LogMap, Log, TEXT("DeferredConfigureTileset: done, %d total, 1 active"), AllTilesets.Num());
 }
 
 ACesium3DTileset* ARGCesiumMapManager::FindTileset() const
