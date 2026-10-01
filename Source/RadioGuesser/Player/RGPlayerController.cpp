@@ -144,19 +144,30 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
 {
     if (bGuessSubmitted) return;
 
-    if (const ARGGlobePawn* Globe = Cast<ARGGlobePawn>(GetPawn()))
-    {
-        if (Globe->DidDragExceedClickThreshold())
-        {
-            return;
-        }
-    }
-
     UGameInstance* GI = GetGameInstance();
     if (!GI) return;
 
     URGMatchSubsystem* Match = GI->GetSubsystem<URGMatchSubsystem>();
-    if (!Match || Match->GetMatchState() != ERGMatchState::RoundActive) return;
+    if (!Match)
+    {
+        UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: No MatchSubsystem"));
+        return;
+    }
+    if (Match->GetMatchState() != ERGMatchState::RoundActive)
+    {
+        UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: Match not active (state=%d)"),
+            static_cast<int32>(Match->GetMatchState()));
+        return;
+    }
+
+    if (const ARGGlobePawn* Globe = Cast<ARGGlobePawn>(GetPawn()))
+    {
+        if (Globe->DidDragExceedClickThreshold())
+        {
+            UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: drag exceeded threshold, skip"));
+            return;
+        }
+    }
 
     if (!CachedMapManager)
     {
@@ -169,6 +180,9 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
         UEngineTypes::ConvertToTraceType(ECC_Visibility),
         false,
         HitResult);
+
+    UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: bHit=%d, blocking=%d"),
+        bHit, bHit && HitResult.IsValidBlockingHit());
 
     if (bHit && HitResult.IsValidBlockingHit())
     {
