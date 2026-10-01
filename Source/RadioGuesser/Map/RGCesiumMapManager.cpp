@@ -77,6 +77,7 @@ void ARGCesiumMapManager::BeginPlay()
     if (ACesium3DTileset* Tileset = FindTileset())
     {
         ConfigureTileset(Tileset);
+        Tileset->RefreshTileset();  // apply new settings immediately
     }
     AddMapTilerOverlay();
     ConfigureGlobeLighting();

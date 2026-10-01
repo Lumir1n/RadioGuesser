@@ -164,33 +164,34 @@ void ARGGlobePawn::ApplyCameraToGlobe()
 {
     if (!CachedGeoreference) return;
 
-    // ── Camera world position: above the look-at point along ellipsoid normal ──
-    // TransformLongitudeLatitudeHeightPositionToUnreal is always correct because
-    // Cesium stores ECEF coordinates internally and transforms them to Unreal
-    // space using the current georeference origin.  OriginShift keeps that
-    // origin moving under us, so this position is always a small vector in
-    // UE space — perfect floating-point precision.
-    const double HeightM = static_cast<double>(CurrentArmLength) * 0.01; // cm → m
+    // ── 1. Camera world position ───────────────────────────────────────────────
+    // Place the camera above the look-at lat/lon at the current altitude.
+    // TransformLongitudeLatitudeHeightPositionToUnreal always returns a position
+    // close to the UE origin because UCesiumOriginShiftComponent continuously
+    // keeps the georeference origin under the pawn.
+    const double HeightM = static_cast<double>(CurrentArmLength) * 0.01; // cm→m
     const FVector CamPos = CachedGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
         FVector(ViewLongitude, ViewLatitude, HeightM));
     SetActorLocation(CamPos);
 
-    // ── Camera orientation: nadir view, north up ──────────────────────────────
-    // In the ENU (East-North-Up) frame at the surface point below the camera:
-    //   East = +X,  North = +Y,  Up = +Z
-    // Cesium uses East-South-Up (ESU), where South = -North, so:
-    //   East = +X,  South = +Y,  Up = +Z
+    // ── 2. Camera orientation: nadir, north-up ────────────────────────────────
+    // Cesium ESU frame at any surface point:  East=+X, South=+Y, Up=+Z
     //
-    // "Look straight down" in ESU: forward = -Up = (0, 0, -1) in ESU.
-    // "North at top of screen" in ESU: screen-up = -South = (0, -1, 0) in ESU.
+    // For a top-down view with north at screen top we need:
+    //   Camera pitch = -90°  (look straight down)
+    //   Camera yaw   =  0°   (forward = East = +X in ESU, which gives north-up)
+    //   Camera roll  =  0°
     //
-    // TransformEastSouthUpRotatorToUnreal converts this ESU rotation to UE
-    // world space correctly for any lat/lon, including poles and antimeridian.
-    const FRotator ESUNadirNorthUp = FRotationMatrix::MakeFromXZ(
-        FVector(0.0,  0.0, -1.0),   // forward  = -Up    (nadir)
-        FVector(0.0, -1.0,  0.0)    // screen-up = -South (north)
-    ).Rotator();
-
+    // In Cesium's ESU yaw convention:
+    //   Yaw  0° = facing East
+    //   Yaw 90° = facing South
+    // So with Pitch=-90 and Yaw=0 the camera looks straight down and
+    // "up on screen" = North. That is exactly what we want.
+    //
+    // NOTE: Do NOT use FRotationMatrix::MakeFromXZ here — its column ordering
+    // interacts with TransformEastSouthUpRotatorToUnreal in a non-obvious way
+    // that produces a tilted/flipped view. A plain FRotator is unambiguous.
+    const FRotator ESUNadirNorthUp(-90.0f, 0.0f, 0.0f);
     SetActorRotation(
         CachedGeoreference->TransformEastSouthUpRotatorToUnreal(ESUNadirNorthUp, CamPos));
 }
