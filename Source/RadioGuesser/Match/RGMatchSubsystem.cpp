@@ -26,6 +26,13 @@ void URGMatchSubsystem::Deinitialize()
 
 void URGMatchSubsystem::StartSoloMatch(int32 NumRounds)
 {
+    if (MatchState != ERGMatchState::Idle)
+    {
+        UE_LOG(LogMatch, Warning, TEXT("StartSoloMatch called while match already running (state=%d) — ignoring"),
+            static_cast<int32>(MatchState));
+        return;
+    }
+
     TotalScore  = 0;
     RoundsDone  = 0;
     TotalRounds = NumRounds;
@@ -166,6 +173,8 @@ void URGMatchSubsystem::OnGuessResultReceived(bool bSuccess, const FString& Resp
     Result.ActualLocation.Longitude = JsonObj->GetNumberField(TEXT("actualLon"));
     Result.DistanceKm = static_cast<float>(JsonObj->GetNumberField(TEXT("distanceKm")));
     Result.Score      = JsonObj->GetIntegerField(TEXT("score"));
+    JsonObj->TryGetStringField(TEXT("stationName"), Result.StationName);
+    JsonObj->TryGetStringField(TEXT("country"), Result.Country);
 
     TotalScore += Result.Score;
     UE_LOG(LogMatch, Log, TEXT("Round result: dist=%.1f km score=%d total=%d"),
