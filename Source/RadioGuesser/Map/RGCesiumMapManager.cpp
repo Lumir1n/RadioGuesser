@@ -13,9 +13,11 @@
 #include "GameFramework/WorldSettings.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/SkyLight.h"
+#include "Engine/ExponentialHeightFog.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/LightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
 #include "Engine/StaticMesh.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -72,6 +74,10 @@ void ARGCesiumMapManager::BeginPlay()
 
     // Add MapTiler Natural Earth overlay to Cesium World Terrain
     // This replaces Bing Maps and has no watermark on the tiles themselves
+    if (ACesium3DTileset* Tileset = FindTileset())
+    {
+        ConfigureTileset(Tileset);
+    }
     AddMapTilerOverlay();
     ConfigureGlobeLighting();
     EnsureMarkerMeshes();
@@ -267,6 +273,16 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
         WS->bEnableWorldBoundsChecks = false;
     }
 
+    for (TActorIterator<AExponentialHeightFog> FogIt(World); FogIt; ++FogIt)
+    {
+        if (UExponentialHeightFogComponent* FogComp =
+            FogIt->FindComponentByClass<UExponentialHeightFogComponent>())
+        {
+            FogComp->SetFogDensity(0.0f);
+            FogComp->SetVisibility(false);
+        }
+    }
+
     for (TActorIterator<ADirectionalLight> It(World); It; ++It)
     {
         if (ULightComponent* Light = It->GetLightComponent())
@@ -382,4 +398,79 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     Tileset->RefreshTileset();
 
     UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
+}
+
+ACesium3DTileset* ARGCesiumMapManager::FindTileset() const
+{
+    if (UWorld* World = GetWorld())
+    {
+        for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
+        {
+            return *It;
+        }
+    }
+    return nullptr;
+}
+
+void ARGCesiumMapManager::ConfigureTileset(ACesium3DTileset* Tileset)
+{
+    if (!Tileset)
+    {
+        return;
+    }
+
+    // ── Mobility ──────────────────────────────────────────────────────────────
+    // Origin rebasing (CesiumOriginShiftComponent on the pawn) moves the
+    // tileset actor through Unreal space each time the origin is shifted.
+    // The tileset must be Movable for that to work.
+    Tileset->SetMobility(EComponentMobility::Movable);
+
+    // ── ForbidHoles = FALSE ────────────────────────────────────────────────────
+    // *** THIS IS THE KEY FIX FOR DUPLICATE CONTINENTS ***
+    //
+    // ForbidHoles = true causes Cesium to render BOTH a parent tile AND its
+    // child tiles simultaneously while the child is loading. At orbit distance
+    // (~5 000 km) the parent tile covers a continent; when Cesium starts
+    // loading higher-resolution children it shows the parent AND the children
+    // at the same time → two copies of Australia / Africa visible at once.
+    //
+    // With ForbidHoles = false (the Cesium default), Cesium shows only the
+    // best available tile at any given moment. There may be a brief blank patch
+    // while a child loads, but there will never be a doubled image.
+    Tileset->ForbidHoles = false;
+
+    // ── FogCulling = TRUE (Cesium default) ───────────────────────────────────
+    // Fog culling drops tiles near/below the visual horizon based on camera
+    // altitude. For an orbit camera this is exactly what we want: tiles on the
+    // far side of the globe are below the "horizon" and get culled, preventing
+    // them from appearing as ghost images through the planet.
+    // The previous value of false was wrong and contributed to the artefacts.
+    Tileset->EnableFogCulling = true;
+
+    // ── FrustumCulling = TRUE (Cesium default) ───────────────────────────────
+    // Frustum culling drops tiles outside the camera frustum. Combined with
+    // fog culling, this means only tiles in the visible hemisphere are loaded.
+    Tileset->EnableFrustumCulling = true;
+
+    // ── ScreenSpaceError ──────────────────────────────────────────────────────
+    // At 5 000 km altitude the entire Earth occupies maybe 800 px on screen.
+    // With SSE=16 (default) Cesium loads far more detail than the screen can
+    // show, wasting bandwidth and GPU. SSE=32 halves the tile count; SSE=64
+    // is fine for a whole-globe view. We use 32 as a balance: still sharp
+    // when zoomed in to country level, not overloaded at orbit altitude.
+    Tileset->SetMaximumScreenSpaceError(32.0);
+
+    // ── Preloading ────────────────────────────────────────────────────────────
+    // PreloadAncestors helps when zooming out (parents are already cached).
+    // PreloadSiblings causes tiles adjacent to the view to preload — this
+    // doubles tile count for little benefit at globe scale. Disable it.
+    Tileset->PreloadAncestors = true;
+    Tileset->PreloadSiblings  = false;
+
+    // ── Physics meshes ────────────────────────────────────────────────────────
+    // We need physics meshes for raycasts (click-to-guess, drag-to-pan).
+    Tileset->SetCreatePhysicsMeshes(true);
+
+    UE_LOG(LogMap, Log,
+        TEXT("ConfigureTileset: ForbidHoles=false FogCulling=true FrustumCulling=true SSE=32"));
 }
