@@ -358,7 +358,7 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
         if (ULightComponent* Light = It->GetLightComponent())
         {
             Light->SetCastShadows(false);
-            Light->SetIntensity(3.0f);  // was 12 — reduced to avoid washed-out map tiles
+            Light->SetIntensity(1.5f);  // slightly dimmer for natural map look
         }
     }
 
@@ -383,7 +383,7 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
             SkyComp->SetMobility(EComponentMobility::Movable);
             SkyComp->bLowerHemisphereIsBlack = false;
             SkyComp->LowerHemisphereColor = FLinearColor::White;
-            SkyComp->SetIntensity(2.0f);  // was 6 — reduced to avoid washed-out map tiles
+            SkyComp->SetIntensity(1.0f);  // slightly dimmer for natural map look
             SkyComp->RecaptureSky();
         }
     }
