@@ -4,6 +4,9 @@
 #include "RadioGuesser.h"
 #include "MediaPlayer.h"
 #include "StreamMediaSource.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 void URGRadioSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -61,13 +64,29 @@ void URGRadioSubsystem::OpenStream(const FRGRadioStreamInfo& StreamInfo)
     UE_LOG(LogRadio, Log, TEXT("OpenStream: %s"), *StreamInfo.DisplayName);
     SetPlaybackState(ERGRadioPlaybackState::Connecting);
 
-    // Close any previous session first — prevents ElectraPlayer from
-    // attempting video decoder init on the residual open connection.
+    // Close previous session. ElectraPlayer is asynchronous — we must wait
+    // one frame before opening a new source or the video decoder asserts.
     MediaPlayer->Close();
 
-    StreamMediaSource->StreamUrl = StreamInfo.StreamUrl;
-    MediaPlayer->OpenSource(StreamMediaSource);
-    // MediaPlayer will fire OnMediaOpened → HandleMediaOpened → state = Playing
+    // Defer OpenSource to the next tick so ElectraPlayer finishes shutting down.
+    if (UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr)
+    {
+        FTimerHandle OpenTimer;
+        World->GetTimerManager().SetTimer(OpenTimer, [this]()
+        {
+            if (MediaPlayer && StreamMediaSource && !ActiveStream.StreamUrl.IsEmpty())
+            {
+                StreamMediaSource->StreamUrl = ActiveStream.StreamUrl;
+                MediaPlayer->OpenSource(StreamMediaSource);
+            }
+        }, 0.1f, false);
+    }
+    else
+    {
+        // Fallback: no world available, open immediately
+        StreamMediaSource->StreamUrl = StreamInfo.StreamUrl;
+        MediaPlayer->OpenSource(StreamMediaSource);
+    }
 }
 
 void URGRadioSubsystem::Play()
