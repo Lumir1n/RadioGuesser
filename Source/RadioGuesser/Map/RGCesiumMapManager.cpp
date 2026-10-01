@@ -72,16 +72,31 @@ void ARGCesiumMapManager::BeginPlay()
         }
     }
 
-    // Add MapTiler Natural Earth overlay to Cesium World Terrain
-    // This replaces Bing Maps and has no watermark on the tiles themselves
-    if (ACesium3DTileset* Tileset = FindTileset())
+    // Configure ALL Cesium3DTilesets in the level (there may be more than one).
+    // Only the first one gets our MapTiler overlay, but all must have correct
+    // rendering settings to prevent duplicate-continent artefacts.
     {
-        ConfigureTileset(Tileset);
-        Tileset->RefreshTileset();  // apply new settings immediately
+        TArray<ACesium3DTileset*> AllTilesets;
+        for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+            AllTilesets.Add(*It);
+
+        UE_LOG(LogMap, Log, TEXT("ARGCesiumMapManager: Found %d tileset(s) in level"), AllTilesets.Num());
+
+        for (ACesium3DTileset* T : AllTilesets)
+        {
+            ConfigureTileset(T);
+            T->RefreshTileset();
+        }
     }
     AddMapTilerOverlay();
     ConfigureGlobeLighting();
     EnsureMarkerMeshes();
+
+    // Re-apply after 1 second in case Cesium's own BeginPlay restores stale values
+    GetWorldTimerManager().SetTimer(
+        DeferredConfigureTimer, this,
+        &ARGCesiumMapManager::DeferredConfigureTileset,
+        1.0f, false);
 }
 
 void ARGCesiumMapManager::Tick(float DeltaTime)
@@ -399,6 +414,17 @@ void ARGCesiumMapManager::AddMapTilerOverlay()
     Tileset->RefreshTileset();
 
     UE_LOG(LogMap, Log, TEXT("AddMapTilerOverlay: MapTiler overlay added — URL: %s"), *TileUrl);
+}
+
+void ARGCesiumMapManager::DeferredConfigureTileset()
+{
+    // Re-apply tileset settings after Cesium's own initialization, for ALL tilesets.
+    for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+    {
+        ConfigureTileset(*It);
+        (*It)->RefreshTileset();
+    }
+    UE_LOG(LogMap, Log, TEXT("DeferredConfigureTileset: settings re-applied to all tilesets"));
 }
 
 ACesium3DTileset* ARGCesiumMapManager::FindTileset() const

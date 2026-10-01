@@ -8,8 +8,6 @@
 #include "RGGlobePawn.generated.h"
 
 class ACesiumGeoreference;
-class UCesiumOriginShiftComponent;
-class UCesiumGlobeAnchorComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class UInputMappingContext;
@@ -17,16 +15,19 @@ class UInputAction;
 struct FInputActionValue;
 
 /**
- * ARGGlobePawn — north-up globe camera, Google Earth style.
+ * ARGGlobePawn — north-up globe camera, Google Earth / Google Maps style.
  *
- * Uses UCesiumOriginShiftComponent (ChangeCesiumGeoreference mode) to keep
- * the UE world origin under the camera at all times.  This is the same
- * mechanism Cesium's own GlobeAwareDefaultPawn uses, so tile LODs stay
- * stable and there are no duplicate-continent artefacts.
+ * Architecture (stable, no OriginShift conflicts):
+ *   • Every tick: SetOriginLongitudeLatitudeHeight(ViewLon, ViewLat, 0)
+ *     → UE origin is always directly below the camera on the surface.
+ *   • Camera placed at (0, 0, HeightCm * CmToUE) in UE space.
+ *     When the origin is right below us, +Z in UE IS the local "Up" direction.
+ *   • Orientation computed from the ESU matrix at the origin:
+ *     East→+X, North→-Y (ESU has South=+Y so North=-Y), Up→+Z.
+ *     Camera looks down (-Z) with screen-up = North (-Y).
  *
- * The camera always looks straight down with north at the top of screen.
- * Drag pans the view in geographic space (lat/lon).
- * Scroll wheel zooms (height above ellipsoid).
+ * Drag pans ViewLat/ViewLon (geographic coordinates).
+ * Scroll wheel adjusts CurrentArmLength (height above ellipsoid, cm).
  */
 UCLASS()
 class RADIOGUESSER_API ARGGlobePawn : public APawn
@@ -36,11 +37,11 @@ class RADIOGUESSER_API ARGGlobePawn : public APawn
 public:
     ARGGlobePawn();
 
-    /** True if the current LMB press moved further than a click threshold. */
+    /** True if LMB drag exceeded the click threshold (used by controller). */
     UFUNCTION(BlueprintPure, Category = "Globe|Input")
     bool DidDragExceedClickThreshold() const { return bDragExceededThreshold; }
 
-    /** Frame the camera so both guess and actual station are visible. */
+    /** Move the view to frame both guess and actual locations. */
     UFUNCTION(BlueprintCallable, Category = "Globe|Camera")
     void FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate Actual, float DistanceKm);
 
@@ -67,35 +68,32 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<UCameraComponent> Camera;
 
-    /** Drives automatic Cesium origin rebasing as the camera moves. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-    TObjectPtr<UCesiumOriginShiftComponent> OriginShift;
-
-    /** Required by OriginShift to track the pawn's ECEF position. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-    TObjectPtr<UCesiumGlobeAnchorComponent> GlobeAnchor;
-
-    // ── Tuning ─────────────────────────────────────────────────────────────────
+    // ── Camera tuning ──────────────────────────────────────────────────────────
+    /** Minimum altitude above ellipsoid in centimetres (100 km). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MinArmLength = 10000000.0f;   // 100 km
+    float MinArmLength = 10000000.0f;
 
+    /** Maximum altitude above ellipsoid in centimetres (30 000 km). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MaxArmLength = 3000000000.0f; // 30 000 km
+    float MaxArmLength = 3000000000.0f;
 
+    /** WASD speed multiplier (fraction of view height per second). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float KeyboardPanSpeed = 1.5f;
 
+    /** Minimum pixel movement before a click is treated as a drag. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float ClickDragThreshold = 8.0f;
 
-    /** Height (cm) where N/S pan starts fading out at planet view. */
+    /** Latitude above which N/S panning starts to fade (planet-scale view). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PlanetViewStartHeight = 800000000.0f;
+    float PlanetViewStartHeight = 800000000.0f;   // 8 000 km
 
-    /** Height (cm) where only E/W spin remains. */
+    /** Altitude at which N/S panning is fully suppressed. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float PlanetViewFullHeight = 1800000000.0f;
+    float PlanetViewFullHeight = 1800000000.0f;   // 18 000 km
 
+    /** Latitude clamped to ±this value to avoid pole singularities. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
     float MaxAbsLatitude = 85.0f;
 
@@ -118,12 +116,17 @@ private:
     bool  bDragExceededThreshold = false;
     bool  bHasGrabPoint          = false;
     float TotalDragPixels        = 0.0f;
-    float CurrentArmLength       = 500000000.0f; // 5 000 km start
+    float CurrentArmLength       = 500000000.0f; // 5 000 km default
 
-    double ViewLatitude  = 30.0;
-    double ViewLongitude = 20.0;
+    double ViewLatitude  = 48.0;   // start over central Europe
+    double ViewLongitude = 15.0;
+
     double GrabLatitude  = 0.0;
     double GrabLongitude = 0.0;
+
+    // Throttle origin rebasing: only rebase when view moved more than this
+    double LastRebaseLatitude  = 1e30;
+    double LastRebaseLongitude = 1e30;
 
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
     FVector2D LastCursorPos  = FVector2D::ZeroVector;

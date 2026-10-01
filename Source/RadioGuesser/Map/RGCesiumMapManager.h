@@ -12,6 +12,7 @@ class ACesiumGeoreference;
 class ACesium3DTileset;
 class UCesiumRasterOverlay;
 class UCesiumUrlTemplateRasterOverlay;
+class UInstancedStaticMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMapClick,
     FRGGeoCoordinate, Coordinate,
@@ -34,6 +35,7 @@ public:
 
     // No Tick needed — ticking is disabled in the constructor
     virtual void BeginPlay() override;
+    virtual void Tick(float DeltaTime) override;
 
     // ── Coordinate conversion ─────────────────────────────────────────────────
 
@@ -73,6 +75,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Map|Markers")
     TObjectPtr<UStaticMeshComponent> ActualLocationMarkerMesh;
 
+    /** Dotted great-circle between guess and actual station (result phase). */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Map|Markers")
+    TObjectPtr<UInstancedStaticMeshComponent> ResultArcMesh;
+
     /** Height above the globe surface for markers, in centimetres (500 m default) */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Map|Markers")
     float MarkerHeightOffset = 50000.0f;
@@ -80,6 +86,25 @@ public:
 private:
     UFUNCTION() void OnGuessPlaced(FRGGeoCoordinate Coordinate);
     UFUNCTION() void OnGuessResult(FRGGuessResult   Result);
+    UFUNCTION() void OnGuessCleared();
 
+    void ConfigureTileset(ACesium3DTileset* Tileset);
     void AddMapTilerOverlay();
+    void ConfigureGlobeLighting();
+    void EnsureMarkerMeshes();
+    void UpdateMarkerTransform(UStaticMeshComponent* Mesh, FRGGeoCoordinate Coordinate);
+    void UpdateMarkerScales();
+    void UpdateResultArc();
+    ACesium3DTileset* FindTileset() const;
+
+    // Called 1 second after BeginPlay to re-apply tileset settings after
+    // Cesium finishes its own BeginPlay initialization.
+    UFUNCTION() void DeferredConfigureTileset();
+
+    FTimerHandle DeferredConfigureTimer;
+
+    FRGGeoCoordinate LastGuessCoord;
+    FRGGeoCoordinate LastActualCoord;
+    bool bGuessMarkerOn  = false;
+    bool bActualMarkerOn = false;
 };
