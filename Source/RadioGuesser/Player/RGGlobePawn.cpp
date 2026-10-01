@@ -175,23 +175,19 @@ void ARGGlobePawn::ApplyCameraToGlobe()
     SetActorLocation(CamPos);
 
     // ── 2. Camera orientation: nadir, north-up ────────────────────────────────
-    // Cesium ESU frame at any surface point:  East=+X, South=+Y, Up=+Z
+    // Cesium ESU Yaw convention (from GlobeAwareDefaultPawn.cpp comments):
+    //   Yaw   0° = facing East
+    //   Yaw  90° = facing South
+    //   Yaw 180° = facing West
+    //   Yaw 270° = facing North
+    //   Pitch negative = looking down, positive = looking up
     //
-    // For a top-down view with north at screen top we need:
-    //   Camera pitch = -90°  (look straight down)
-    //   Camera yaw   =  0°   (forward = East = +X in ESU, which gives north-up)
-    //   Camera roll  =  0°
-    //
-    // In Cesium's ESU yaw convention:
-    //   Yaw  0° = facing East
-    //   Yaw 90° = facing South
-    // So with Pitch=-90 and Yaw=0 the camera looks straight down and
-    // "up on screen" = North. That is exactly what we want.
-    //
-    // NOTE: Do NOT use FRotationMatrix::MakeFromXZ here — its column ordering
-    // interacts with TransformEastSouthUpRotatorToUnreal in a non-obvious way
-    // that produces a tilted/flipped view. A plain FRotator is unambiguous.
-    const FRotator ESUNadirNorthUp(-90.0f, 0.0f, 0.0f);
+    // For a top-down view with NORTH at the TOP of the screen:
+    //   Pitch = -90  (camera aims straight down)
+    //   Yaw   = 270  (when pitch=-90, Yaw controls which direction is "up"
+    //                 on screen; Yaw=270 puts North at the top)
+    //   Roll  = 0
+    const FRotator ESUNadirNorthUp(-90.0f, 270.0f, 0.0f);
     SetActorRotation(
         CachedGeoreference->TransformEastSouthUpRotatorToUnreal(ESUNadirNorthUp, CamPos));
 }
