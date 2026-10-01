@@ -7,6 +7,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "CesiumCreditSystem.h"
+#include "Components/Widget.h"
+#include "Styling/SlateTypes.h"
+#include "ScreenCreditsWidget.h"
 #include "CesiumGeoreference.h"
 #include "Cesium3DTileset.h"
 #include "CesiumRasterOverlay.h"
@@ -150,6 +153,17 @@ void ARGCesiumMapManager::Tick(float DeltaTime)
     if (bActualMarkerOn)
     {
         UpdateMarkerTransform(ActualLocationMarkerMesh, LastActualCoord);
+    }
+
+    // Cesium's CreditSystem re-adds its widget every tick.
+    // We collapse it every tick to counteract that.
+    if (ACesiumCreditSystem* Credits = ACesiumCreditSystem::GetDefaultCreditSystem(this))
+    {
+        if (UScreenCreditsWidget* W = Credits->CreditsWidget)
+        {
+            if (W->GetVisibility() != ESlateVisibility::Collapsed)
+                W->SetVisibility(ESlateVisibility::Collapsed);
+        }
     }
 }
 

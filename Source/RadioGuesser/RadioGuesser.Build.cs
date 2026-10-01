@@ -34,5 +34,11 @@ public class RadioGuesser : ModuleRules
         {
             // OnlineSubsystem and OnlineSubsystemUtils will be added in Phase 7 (Multiplayer)
         });
+
+        // Allow access to Cesium's private headers (e.g. ScreenCreditsWidget.h)
+        // so we can hide the credit widget at runtime.
+        // ModuleDirectory = .../Source/RadioGuesser — go up two levels to project root
+        PrivateIncludePaths.Add(Path.Combine(
+            ModuleDirectory, "..", "..", "Plugins", "CesiumForUnreal", "Source", "CesiumRuntime", "Private"));
     }
 }
