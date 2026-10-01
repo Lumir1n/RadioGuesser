@@ -69,9 +69,9 @@ protected:
     TObjectPtr<UCameraComponent> Camera;
 
     // ── Camera tuning ──────────────────────────────────────────────────────────
-    /** Minimum altitude above ellipsoid in centimetres (100 km). */
+    /** Minimum altitude above ellipsoid in centimetres (1 km — allows close zoom). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float MinArmLength = 10000000.0f;
+    float MinArmLength = 100000.0f;   // 1 km
 
     /** Maximum altitude above ellipsoid in centimetres (30 000 km). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
