@@ -358,7 +358,7 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
         if (ULightComponent* Light = It->GetLightComponent())
         {
             Light->SetCastShadows(false);
-            Light->SetIntensity(12.0f);
+            Light->SetIntensity(3.0f);  // was 12 — reduced to avoid washed-out map tiles
         }
     }
 
@@ -383,7 +383,7 @@ void ARGCesiumMapManager::ConfigureGlobeLighting()
             SkyComp->SetMobility(EComponentMobility::Movable);
             SkyComp->bLowerHemisphereIsBlack = false;
             SkyComp->LowerHemisphereColor = FLinearColor::White;
-            SkyComp->SetIntensity(6.0f);
+            SkyComp->SetIntensity(2.0f);  // was 6 — reduced to avoid washed-out map tiles
             SkyComp->RecaptureSky();
         }
     }
@@ -594,6 +594,11 @@ void ARGCesiumMapManager::ConfigureTileset(ACesium3DTileset* Tileset)
     // Disable the on-screen "CESIUM ion" credit overlay on this tileset.
     // The credit system widget is handled separately by HideCesiumCredits().
     Tileset->ShowCreditsOnScreen = false;
+
+    // Render tiles without engine lighting — keeps colours as MapTiler intended.
+    // IgnoreKhrMaterialsUnlit=false means tiles respect their unlit material flag,
+    // which makes them look the same as in a browser (no directional light baking).
+    Tileset->SetIgnoreKhrMaterialsUnlit(false);
 
     UE_LOG(LogMap, Log,
         TEXT("ConfigureTileset: ForbidHoles=false FogCulling=true FrustumCulling=true SSE=32"));
