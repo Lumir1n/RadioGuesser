@@ -14,6 +14,7 @@
 #include "Engine/EngineTypes.h"
 #include "CesiumGeoreference.h"
 #include "CesiumOriginShiftComponent.h"
+#include "CesiumGlobeAnchorComponent.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Architecture
@@ -67,6 +68,12 @@ ARGGlobePawn::ARGGlobePawn()
     Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
     Camera->bUsePawnControlRotation = false;
     Camera->SetFieldOfView(60.0f);
+
+    // GlobeAnchor must be created BEFORE OriginShift — OriginShift inherits
+    // from UCesiumGlobeAnchoredActorComponent which calls GetGlobeAnchor() on
+    // the same actor. Without a GlobeAnchor sibling the origin shift silently
+    // does nothing and coordinates grow unbounded → duplicate continents.
+    GlobeAnchor = CreateDefaultSubobject<UCesiumGlobeAnchorComponent>(TEXT("GlobeAnchor"));
 
     // Cesium origin-shift component — keeps the georeference origin directly
     // below the pawn so UE floating-point precision stays good everywhere.

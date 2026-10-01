@@ -9,6 +9,7 @@
 
 class ACesiumGeoreference;
 class UCesiumOriginShiftComponent;
+class UCesiumGlobeAnchorComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class UInputMappingContext;
@@ -69,6 +70,10 @@ protected:
     /** Drives automatic Cesium origin rebasing as the camera moves. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<UCesiumOriginShiftComponent> OriginShift;
+
+    /** Required by OriginShift to track the pawn's ECEF position. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    TObjectPtr<UCesiumGlobeAnchorComponent> GlobeAnchor;
 
     // ── Tuning ─────────────────────────────────────────────────────────────────
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
