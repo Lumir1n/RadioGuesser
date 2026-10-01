@@ -6,6 +6,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/GameInstance.h"
 #include "Player/RGGlobePawn.h"
+#include "GameFramework/WorldSettings.h"
 
 ARGGameMode::ARGGameMode()
 {
@@ -17,6 +18,14 @@ void ARGGameMode::BeginPlay()
 {
     Super::BeginPlay();
     UE_LOG(LogMatch, Log, TEXT("ARGGameMode BeginPlay — TotalRounds=%d"), TotalRounds);
+
+    if (UWorld* World = GetWorld())
+    {
+        if (AWorldSettings* WS = World->GetWorldSettings())
+        {
+            WS->bEnableWorldBoundsChecks = false;
+        }
+    }
 
     // Create UI widgets
     CreateHUDWidget();
@@ -30,6 +39,9 @@ void ARGGameMode::BeginPlay()
             Match->OnRoundResultReady.AddDynamic(this, &ARGGameMode::HandleRoundResultReady);
             Match->OnMatchCompleted.AddDynamic(this,   &ARGGameMode::HandleMatchCompleted);
             Match->OnMatchStateChanged.AddDynamic(this, &ARGGameMode::HandleMatchStateChanged);
+
+            // Start the solo match automatically
+            Match->StartSoloMatch(TotalRounds);
         }
     }
 }
