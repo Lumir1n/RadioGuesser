@@ -28,6 +28,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/RGGlobePawn.h"
+#include "Camera/PlayerCameraManager.h"
 
 // MapTiler API key — shared key used for both terrain and map tiles.
 // Free tier: 100 000 tiles/month — plenty for development.
@@ -303,26 +304,27 @@ void ARGCesiumMapManager::UpdateMarkerTransform(UStaticMeshComponent* Mesh, FRGG
 
 void ARGCesiumMapManager::UpdateMarkerScales()
 {
-    // Scale markers proportionally to camera altitude so they're always visible:
-    // ~2 000 m at close zoom, scales up linearly to ~500 km at globe view.
+    // Scale markers proportionally to camera altitude so they stay visible at any zoom.
+    // Base scale: 10 000 (guess), 30 000 (actual). Multiply 1–4× with altitude.
     APlayerCameraManager* CamMgr = nullptr;
     if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
         CamMgr = PC->PlayerCameraManager;
 
     if (!CamMgr) return;
 
-    const FVector CamPos  = CamMgr->GetCameraLocation();
-    const double  AltCm   = CamPos.Size(); // rough distance from origin (Earth centre ≈ 0)
-    const double  AltKm   = AltCm * 0.00001; // cm → km
+    const FVector CamPos = CamMgr->GetCameraLocation();
+    const double  AltCm  = CamPos.Size();
+    const double  AltKm  = AltCm * 0.00001;
 
-    // Clamp: min 200 km (close zoom), max 8000 km (full globe)
-    const double  ClampedKm = FMath::Clamp(AltKm, 200.0, 8000.0);
-    const float   Scale     = static_cast<float>(ClampedKm * 3.0); // ~600 to ~24 000 UE units
+    // [200 km, 8000 km] → multiplier [1.0, 4.0]
+    const double ClampedKm  = FMath::Clamp(AltKm, 200.0, 8000.0);
+    const float  Multiplier = static_cast<float>(FMath::GetMappedRangeValueClamped(
+        FVector2D(200.0, 8000.0), FVector2D(1.0, 4.0), ClampedKm));
 
     if (bGuessMarkerOn  && GuessMarkerMesh)
-        GuessMarkerMesh->SetWorldScale3D(FVector(Scale));
+        GuessMarkerMesh->SetWorldScale3D(FVector(10000.0f * Multiplier));
     if (bActualMarkerOn && ActualLocationMarkerMesh)
-        ActualLocationMarkerMesh->SetWorldScale3D(FVector(Scale));
+        ActualLocationMarkerMesh->SetWorldScale3D(FVector(30000.0f * Multiplier));
 }
 
 void ARGCesiumMapManager::EnsureMarkerMeshes()
@@ -348,36 +350,32 @@ void ARGCesiumMapManager::EnsureMarkerMeshes()
         Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Mesh->SetCastShadow(false);
 
-        // Use the engine's flat-colour "WorldGridMaterial" as a base — it has a
-        // reliable "Color" (BaseColor) parameter and is visible without lighting.
-        // Fallback: create a plain colored material from scratch via UMaterialInterface
-        // that always renders, regardless of lighting or Substrate settings.
+        // EmissiveMeshMaterial — Unlit emissive material with an EmissiveColor param.
+        // Works reliably in UE5 Substrate mode without needing BaseColor/Color params.
         UMaterialInterface* Base = LoadObject<UMaterialInterface>(
-            nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
+            nullptr, TEXT("/Engine/EngineMaterials/EmissiveMeshMaterial.EmissiveMeshMaterial"));
         if (!Base)
         {
+            // Final fallback: WorldGridMaterial (may be wrong colour but at least visible)
             Base = LoadObject<UMaterialInterface>(
-                nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+                nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
         }
         if (Base)
         {
             UMaterialInstanceDynamic* MID = Mesh->CreateDynamicMaterialInstance(0, Base);
             if (MID)
             {
-                // WorldGridMaterial uses "Color" param; BasicShapeMaterial uses "BaseColor"
-                MID->SetVectorParameterValue(TEXT("Color"),     Color);
-                MID->SetVectorParameterValue(TEXT("BaseColor"), Color);
-                // Emissive so the marker glows even without scene lighting
-                MID->SetVectorParameterValue(TEXT("EmissiveColor"), Color * 3.0f);
-                MID->SetScalarParameterValue(TEXT("EmissiveIntensity"), 3.0f);
+                // EmissiveMeshMaterial has a single "EmissiveColor" vector param
+                MID->SetVectorParameterValue(TEXT("EmissiveColor"), Color);
             }
         }
     };
 
-    // Yellow pin for the player's guess, red pin for the actual station location.
-    // Scale 2000 = ~20 m diameter, visible from country-level zoom and above.
-    SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 2000.0f);
-    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.15f, 0.10f), 2000.0f);
+    // Yellow = player's guess, Red = actual radio station location.
+    // Guess: ~10 km diameter at default altitude, scales via UpdateMarkerScales().
+    // Actual: 3× bigger so it's very easy to spot after result.
+    SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 10000.0f);
+    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.10f, 0.05f), 30000.0f);
 }
 
 void ARGCesiumMapManager::ConfigureGlobeLighting()
