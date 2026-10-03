@@ -13,6 +13,8 @@
 #include "InputMappingContext.h"
 #include "InputAction.h"
 #include "Engine/EngineTypes.h"
+#include "CesiumGeoreference.h"
+#include "CesiumWgs84Ellipsoid.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Player/RGGlobePawn.h"
 
@@ -175,40 +177,100 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
         return;
     }
 
+    // ── Strategy 1: standard line trace (WorldDynamic / WorldStatic / Visibility) ──
     FHitResult HitResult;
-    // Try ECC_WorldDynamic first — CesiumGltfPrimitiveComponent registers itself
-    // as WorldDynamic by default (not WorldStatic as one might expect).
     bool bHit = GetHitResultUnderCursorByChannel(
-        UEngineTypes::ConvertToTraceType(ECC_WorldDynamic),
-        true,   // bTraceComplex — tiles use complex triangle-mesh collision
-        HitResult);
-
-    // Fallback: try WorldStatic in case the project collision settings differ
+        UEngineTypes::ConvertToTraceType(ECC_WorldDynamic), true, HitResult);
     if (!bHit || !HitResult.IsValidBlockingHit())
-    {
         bHit = GetHitResultUnderCursorByChannel(
-            UEngineTypes::ConvertToTraceType(ECC_WorldStatic),
-            true,
-            HitResult);
-    }
-
-    // Last resort: visibility channel (catches anything visible)
+            UEngineTypes::ConvertToTraceType(ECC_WorldStatic), true, HitResult);
     if (!bHit || !HitResult.IsValidBlockingHit())
-    {
         bHit = GetHitResultUnderCursorByChannel(
-            UEngineTypes::ConvertToTraceType(ECC_Visibility),
-            true,
-            HitResult);
-    }
+            UEngineTypes::ConvertToTraceType(ECC_Visibility), true, HitResult);
 
-    UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: bHit=%d, blocking=%d"),
-        bHit,
-        bHit && HitResult.IsValidBlockingHit());
+    UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: traceHit=%d"), bHit && HitResult.IsValidBlockingHit());
 
     if (bHit && HitResult.IsValidBlockingHit())
     {
         CachedMapManager->HandleMapClick(HitResult.ImpactPoint);
+        return;
     }
+
+    // ── Strategy 2: ray-ellipsoid intersection (always works for globe camera) ──
+    // Deproject the cursor pixel to a world-space ray.
+    float MouseX, MouseY;
+    if (!GetMousePosition(MouseX, MouseY))
+    {
+        UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: GetMousePosition failed"));
+        return;
+    }
+
+    FVector RayOriginUnreal, RayDirUnreal;
+    if (!DeprojectScreenPositionToWorld(MouseX, MouseY, RayOriginUnreal, RayDirUnreal))
+    {
+        UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: DeprojectScreenPositionToWorld failed"));
+        return;
+    }
+
+    // Find CesiumGeoreference in the world
+    ACesiumGeoreference* Georef = nullptr;
+    for (TActorIterator<ACesiumGeoreference> It(GetWorld()); It; ++It)
+    {
+        Georef = *It;
+        break;
+    }
+    if (!Georef)
+    {
+        UE_LOG(LogMap, Warning, TEXT("TryPlaceGuessAtCursor: No ACesiumGeoreference found"));
+        return;
+    }
+
+    // Convert ray to ECEF (metres).
+    const FVector RayOriginEcef = Georef->TransformUnrealPositionToEarthCenteredEarthFixed(RayOriginUnreal);
+    const FVector RayDirEcef    = Georef->TransformUnrealDirectionToEarthCenteredEarthFixed(RayDirUnreal);
+
+    // WGS84 semi-axes in metres
+    const FVector Radii = UCesiumWgs84Ellipsoid::GetRadii(); // (a, a, b)
+    const double  Ra    = Radii.X; // equatorial ~6378137 m
+    const double  Rb    = Radii.Z; // polar      ~6356752 m
+
+    // Solve: (Ox+t*Dx)²/Ra² + (Oy+t*Dy)²/Ra² + (Oz+t*Dz)²/Rb² = 1
+    const double Dx = RayDirEcef.X,    Dy = RayDirEcef.Y,    Dz = RayDirEcef.Z;
+    const double Ox = RayOriginEcef.X, Oy = RayOriginEcef.Y, Oz = RayOriginEcef.Z;
+    const double Ra2 = Ra * Ra, Rb2 = Rb * Rb;
+
+    const double A = Dx*Dx/Ra2 + Dy*Dy/Ra2 + Dz*Dz/Rb2;
+    const double B = 2.0 * (Ox*Dx/Ra2 + Oy*Dy/Ra2 + Oz*Dz/Rb2);
+    const double C = Ox*Ox/Ra2 + Oy*Oy/Ra2 + Oz*Oz/Rb2 - 1.0;
+
+    const double Discriminant = B*B - 4.0*A*C;
+    if (Discriminant < 0.0)
+    {
+        UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: ray misses ellipsoid (disc=%.2f)"), Discriminant);
+        return;
+    }
+
+    const double SqrtD = FMath::Sqrt(Discriminant);
+    const double T1    = (-B - SqrtD) / (2.0 * A);
+    const double T2    = (-B + SqrtD) / (2.0 * A);
+    double T = -1.0;
+    if      (T1 > 0.0 && T2 > 0.0) T = FMath::Min(T1, T2);
+    else if (T1 > 0.0)              T = T1;
+    else if (T2 > 0.0)              T = T2;
+
+    if (T < 0.0)
+    {
+        UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: ellipsoid intersection behind camera"));
+        return;
+    }
+
+    const FVector HitEcef   = FVector(Ox + Dx*T, Oy + Dy*T, Oz + Dz*T);
+    const FVector HitUnreal = Georef->TransformEarthCenteredEarthFixedPositionToUnreal(HitEcef);
+
+    UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: ellipsoid hit OK → UE=(%.0f,%.0f,%.0f)"),
+        HitUnreal.X, HitUnreal.Y, HitUnreal.Z);
+
+    CachedMapManager->HandleMapClick(HitUnreal);
 }
 
 void ARGPlayerController::ConfirmGuess()
