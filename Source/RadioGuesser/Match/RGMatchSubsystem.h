@@ -6,6 +6,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Radio/RGRadioSubsystem.h"   // FRGRadioStreamInfo
 #include "Map/RGMapSubsystem.h"       // FRGGeoCoordinate, FRGGuessResult
+#include "Engine/TimerHandle.h"
 #include "RGMatchSubsystem.generated.h"
 
 UENUM(BlueprintType)
@@ -109,4 +110,13 @@ private:
     UPROPERTY() int32         RoundsDone   = 0;
     UPROPERTY() int32         TotalRounds  = 5;
     UPROPERTY() bool          bGuessLocked = false;
+
+    // ── Round-fetch retry ────────────────────────────────────────────────────
+    /** How many consecutive HTTP failures before giving up. */
+    static constexpr int32 MaxRetries        = 5;
+    /** Seconds between retry attempts. */
+    static constexpr float RetryDelaySeconds = 3.0f;
+
+    int32       RetryCount       = 0;
+    FTimerHandle RetryTimerHandle;
 };

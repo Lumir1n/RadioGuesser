@@ -6,6 +6,8 @@
 #include "Radio/RGRadioSubsystem.h"
 #include "Map/RGMapSubsystem.h"
 #include "Engine/GameInstance.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -37,6 +39,7 @@ void URGMatchSubsystem::StartSoloMatch(int32 NumRounds)
     RoundsDone  = 0;
     TotalRounds = NumRounds;
     bGuessLocked = false;
+    RetryCount   = 0;
 
     UE_LOG(LogMatch, Log, TEXT("Starting solo match — %d rounds"), TotalRounds);
     SetMatchState(ERGMatchState::Loading);
@@ -67,10 +70,32 @@ void URGMatchSubsystem::OnRoundDataReceived(bool bSuccess, const FString& Respon
 {
     if (!bSuccess)
     {
-        UE_LOG(LogMatch, Error, TEXT("Failed to fetch round data: %s"), *ResponseBody);
-        SetMatchState(ERGMatchState::Idle);
+        RetryCount++;
+        UE_LOG(LogMatch, Warning, TEXT("Failed to fetch round data (attempt %d/%d): %s"),
+            RetryCount, MaxRetries, *ResponseBody);
+
+        if (RetryCount < MaxRetries)
+        {
+            // Retry after RetryDelaySeconds — stay in Loading state
+            if (UWorld* World = GetGameInstance()->GetWorld())
+            {
+                FTimerDelegate Del;
+                Del.BindUObject(this, &URGMatchSubsystem::FetchNextRound);
+                World->GetTimerManager().SetTimer(RetryTimerHandle, Del, RetryDelaySeconds, false);
+                UE_LOG(LogMatch, Log, TEXT("Retrying in %.1f s..."), RetryDelaySeconds);
+            }
+        }
+        else
+        {
+            UE_LOG(LogMatch, Error, TEXT("All %d retries exhausted — match cannot start"), MaxRetries);
+            SetMatchState(ERGMatchState::Idle);
+            RetryCount = 0;
+        }
         return;
     }
+
+    // Successful response — reset retry counter
+    RetryCount = 0;
 
     // Parse JSON: { roundToken, streamUrl, displayName, roundNumber, totalRounds, durationSeconds }
     TSharedPtr<FJsonObject> JsonObj;
@@ -78,6 +103,8 @@ void URGMatchSubsystem::OnRoundDataReceived(bool bSuccess, const FString& Respon
     if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
     {
         UE_LOG(LogMatch, Error, TEXT("Invalid round JSON: %s"), *ResponseBody);
+        // Treat malformed JSON like a network failure and retry
+        OnRoundDataReceived(false, TEXT("Malformed JSON"));
         return;
     }
 
@@ -157,14 +184,39 @@ void URGMatchSubsystem::OnGuessResultReceived(bool bSuccess, const FString& Resp
 {
     if (!bSuccess)
     {
-        UE_LOG(LogMatch, Error, TEXT("Guess submission failed: %s"), *ResponseBody);
+        UE_LOG(LogMatch, Error, TEXT("Guess submission failed — showing fallback result: %s"), *ResponseBody);
+        // Don't leave the player stuck in RoundActive. Build a minimal fallback result
+        // so the result screen appears and ProceedToNextRound works.
+        FRGGuessResult Fallback;
+        if (URGMapSubsystem* MapSub = GetGameInstance()->GetSubsystem<URGMapSubsystem>())
+        {
+            Fallback.PlayerGuess = MapSub->GetPendingGuess();
+        }
+        Fallback.ActualLocation = Fallback.PlayerGuess; // unknown — show same pin
+        Fallback.DistanceKm     = -1.f;                 // sentinel: backend unavailable
+        Fallback.Score          = 0;
+        Fallback.StationName    = TEXT("Unknown (backend offline)");
+        Fallback.Country        = TEXT("");
+
+        if (URGMapSubsystem* MapSub = GetGameInstance()->GetSubsystem<URGMapSubsystem>())
+        {
+            MapSub->ShowResult(Fallback);
+        }
+        SetMatchState(ERGMatchState::RoundResult);
+        OnRoundResultReady.Broadcast(Fallback);
         return;
     }
 
     // Parse JSON: { guessLat, guessLon, actualLat, actualLon, distanceKm, score }
     TSharedPtr<FJsonObject> JsonObj;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
-    if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid()) return;
+    if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+    {
+        UE_LOG(LogMatch, Error, TEXT("Invalid guess result JSON: %s"), *ResponseBody);
+        // Treat as failure
+        OnGuessResultReceived(false, TEXT("Malformed JSON"));
+        return;
+    }
 
     FRGGuessResult Result;
     Result.PlayerGuess.Latitude   = JsonObj->GetNumberField(TEXT("guessLat"));
