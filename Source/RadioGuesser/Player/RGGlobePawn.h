@@ -83,7 +83,7 @@ protected:
 
     /** Minimum pixel movement before a click is treated as a drag. */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")
-    float ClickDragThreshold = 25.0f;
+    float ClickDragThreshold = 5.0f;
 
     /** Latitude above which N/S panning starts to fade (planet-scale view). */
     UPROPERTY(EditDefaultsOnly, Category = "Globe|Camera")

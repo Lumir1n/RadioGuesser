@@ -176,13 +176,30 @@ void ARGPlayerController::TryPlaceGuessAtCursor()
     }
 
     FHitResult HitResult;
-    // bTraceComplex=true: Cesium terrain tiles use complex (triangle-mesh)
-    // collision — simple/convex shapes don't exist for them, so we MUST use
-    // complex tracing or the hit will always miss.
-    const bool bHit = GetHitResultUnderCursorByChannel(
-        UEngineTypes::ConvertToTraceType(ECC_WorldStatic),
-        true,   // bTraceComplex
+    // Try ECC_WorldDynamic first — CesiumGltfPrimitiveComponent registers itself
+    // as WorldDynamic by default (not WorldStatic as one might expect).
+    bool bHit = GetHitResultUnderCursorByChannel(
+        UEngineTypes::ConvertToTraceType(ECC_WorldDynamic),
+        true,   // bTraceComplex — tiles use complex triangle-mesh collision
         HitResult);
+
+    // Fallback: try WorldStatic in case the project collision settings differ
+    if (!bHit || !HitResult.IsValidBlockingHit())
+    {
+        bHit = GetHitResultUnderCursorByChannel(
+            UEngineTypes::ConvertToTraceType(ECC_WorldStatic),
+            true,
+            HitResult);
+    }
+
+    // Last resort: visibility channel (catches anything visible)
+    if (!bHit || !HitResult.IsValidBlockingHit())
+    {
+        bHit = GetHitResultUnderCursorByChannel(
+            UEngineTypes::ConvertToTraceType(ECC_Visibility),
+            true,
+            HitResult);
+    }
 
     UE_LOG(LogMap, Log, TEXT("TryPlaceGuessAtCursor: bHit=%d, blocking=%d"),
         bHit,
