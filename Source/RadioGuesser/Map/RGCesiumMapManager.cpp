@@ -322,9 +322,9 @@ void ARGCesiumMapManager::UpdateMarkerScales()
         FVector2D(200.0, 8000.0), FVector2D(1.0, 4.0), ClampedKm));
 
     if (bGuessMarkerOn  && GuessMarkerMesh)
-        GuessMarkerMesh->SetWorldScale3D(FVector(10000.0f * Multiplier));
+        GuessMarkerMesh->SetWorldScale3D(FVector(15000.0f * Multiplier));
     if (bActualMarkerOn && ActualLocationMarkerMesh)
-        ActualLocationMarkerMesh->SetWorldScale3D(FVector(30000.0f * Multiplier));
+        ActualLocationMarkerMesh->SetWorldScale3D(FVector(15000.0f * Multiplier));
 }
 
 void ARGCesiumMapManager::EnsureMarkerMeshes()
@@ -365,17 +365,20 @@ void ARGCesiumMapManager::EnsureMarkerMeshes()
             UMaterialInstanceDynamic* MID = Mesh->CreateDynamicMaterialInstance(0, Base);
             if (MID)
             {
-                // EmissiveMeshMaterial has a single "EmissiveColor" vector param
-                MID->SetVectorParameterValue(TEXT("EmissiveColor"), Color);
+                // EmissiveMeshMaterial parameters confirmed from uasset binary inspection:
+                // "EmissiveColor" (vector) and "Color" (vector) are both present.
+                // Set both with a high-intensity value so it glows visibly.
+                const FLinearColor BrightColor = Color * 10.0f; // HDR intensity for emissive
+                MID->SetVectorParameterValue(TEXT("EmissiveColor"), BrightColor);
+                MID->SetVectorParameterValue(TEXT("Color"),         BrightColor);
             }
         }
     };
 
     // Yellow = player's guess, Red = actual radio station location.
-    // Guess: ~10 km diameter at default altitude, scales via UpdateMarkerScales().
-    // Actual: 3× bigger so it's very easy to spot after result.
-    SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 10000.0f);
-    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.10f, 0.05f), 30000.0f);
+    // Both same base scale 15000. Actual is same size as guess for fairness.
+    SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 15000.0f);
+    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.10f, 0.05f), 15000.0f);
 }
 
 void ARGCesiumMapManager::ConfigureGlobeLighting()
