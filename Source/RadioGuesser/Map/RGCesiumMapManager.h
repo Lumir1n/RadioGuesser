@@ -81,9 +81,9 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Map|Markers")
     TObjectPtr<UInstancedStaticMeshComponent> ResultArcMesh;
 
-    /** Height above the globe surface for markers, in centimetres (500 m default) */
+    /** Height above the globe surface for markers, in centimetres (2 000 m default) */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Map|Markers")
-    float MarkerHeightOffset = 50000.0f;
+    float MarkerHeightOffset = 200000.0f;
 
 private:
     UFUNCTION() void OnGuessPlaced(FRGGeoCoordinate Coordinate);

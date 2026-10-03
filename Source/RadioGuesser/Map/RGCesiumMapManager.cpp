@@ -155,6 +155,12 @@ void ARGCesiumMapManager::Tick(float DeltaTime)
         UpdateMarkerTransform(ActualLocationMarkerMesh, LastActualCoord);
     }
 
+    // Scale markers with camera altitude so they stay visible from any zoom level.
+    if (bGuessMarkerOn || bActualMarkerOn)
+    {
+        UpdateMarkerScales();
+    }
+
     // Cesium's CreditSystem re-adds its widget every tick.
     // We collapse it every tick to counteract that.
     if (ACesiumCreditSystem* Credits = ACesiumCreditSystem::GetDefaultCreditSystem(this))
@@ -295,6 +301,30 @@ void ARGCesiumMapManager::UpdateMarkerTransform(UStaticMeshComponent* Mesh, FRGG
     }
 }
 
+void ARGCesiumMapManager::UpdateMarkerScales()
+{
+    // Scale markers proportionally to camera altitude so they're always visible:
+    // ~2 000 m at close zoom, scales up linearly to ~500 km at globe view.
+    APlayerCameraManager* CamMgr = nullptr;
+    if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+        CamMgr = PC->PlayerCameraManager;
+
+    if (!CamMgr) return;
+
+    const FVector CamPos  = CamMgr->GetCameraLocation();
+    const double  AltCm   = CamPos.Size(); // rough distance from origin (Earth centre ≈ 0)
+    const double  AltKm   = AltCm * 0.00001; // cm → km
+
+    // Clamp: min 200 km (close zoom), max 8000 km (full globe)
+    const double  ClampedKm = FMath::Clamp(AltKm, 200.0, 8000.0);
+    const float   Scale     = static_cast<float>(ClampedKm * 3.0); // ~600 to ~24 000 UE units
+
+    if (bGuessMarkerOn  && GuessMarkerMesh)
+        GuessMarkerMesh->SetWorldScale3D(FVector(Scale));
+    if (bActualMarkerOn && ActualLocationMarkerMesh)
+        ActualLocationMarkerMesh->SetWorldScale3D(FVector(Scale));
+}
+
 void ARGCesiumMapManager::EnsureMarkerMeshes()
 {
     UStaticMesh* Sphere = LoadObject<UStaticMesh>(
@@ -316,18 +346,38 @@ void ARGCesiumMapManager::EnsureMarkerMeshes()
         }
         Mesh->SetWorldScale3D(FVector(Scale));
         Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(
-                nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+        Mesh->SetCastShadow(false);
+
+        // Use the engine's flat-colour "WorldGridMaterial" as a base — it has a
+        // reliable "Color" (BaseColor) parameter and is visible without lighting.
+        // Fallback: create a plain colored material from scratch via UMaterialInterface
+        // that always renders, regardless of lighting or Substrate settings.
+        UMaterialInterface* Base = LoadObject<UMaterialInterface>(
+            nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
+        if (!Base)
         {
-            if (UMaterialInstanceDynamic* MID = Mesh->CreateDynamicMaterialInstance(0, Base))
+            Base = LoadObject<UMaterialInterface>(
+                nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        }
+        if (Base)
+        {
+            UMaterialInstanceDynamic* MID = Mesh->CreateDynamicMaterialInstance(0, Base);
+            if (MID)
             {
-                MID->SetVectorParameterValue(TEXT("Color"), Color);
+                // WorldGridMaterial uses "Color" param; BasicShapeMaterial uses "BaseColor"
+                MID->SetVectorParameterValue(TEXT("Color"),     Color);
+                MID->SetVectorParameterValue(TEXT("BaseColor"), Color);
+                // Emissive so the marker glows even without scene lighting
+                MID->SetVectorParameterValue(TEXT("EmissiveColor"), Color * 3.0f);
+                MID->SetScalarParameterValue(TEXT("EmissiveIntensity"), 3.0f);
             }
         }
     };
 
-    SetupMarker(GuessMarkerMesh, FLinearColor(1.0f, 0.85f, 0.1f), 800.0f);
-    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.15f, 0.1f), 800.0f);
+    // Yellow pin for the player's guess, red pin for the actual station location.
+    // Scale 2000 = ~20 m diameter, visible from country-level zoom and above.
+    SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 2000.0f);
+    SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.15f, 0.10f), 2000.0f);
 }
 
 void ARGCesiumMapManager::ConfigureGlobeLighting()
