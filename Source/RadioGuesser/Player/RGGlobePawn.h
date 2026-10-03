@@ -131,4 +131,13 @@ private:
     FVector2D LastMouseDelta = FVector2D::ZeroVector;
     FVector2D LastCursorPos  = FVector2D::ZeroVector;
     bool      bHaveCursorPos = false;
+
+    // ── Smooth camera fly-to animation ─────────────────────────────────────────
+    // Set by FocusOnGuessResult; Tick() lerps toward these targets.
+    bool   bCameraAnimating    = false;
+    double AnimTargetLatitude  = 0.0;
+    double AnimTargetLongitude = 0.0;
+    float  AnimTargetArmLength = 0.0f;
+    float  AnimElapsed         = 0.0f;   // seconds since animation started
+    float  AnimDuration        = 2.5f;   // total fly-to duration in seconds
 };

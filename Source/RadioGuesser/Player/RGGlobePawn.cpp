@@ -154,8 +154,39 @@ void ARGGlobePawn::Tick(float DeltaTime)
     if (!CachedGeoreference)
         CachedGeoreference = FindGeoreference();
 
+    // ── Camera fly-to animation ───────────────────────────────────────────────
+    if (bCameraAnimating)
+    {
+        AnimElapsed += DeltaTime;
+        // Smooth ease-in-out: f(t) = t*t*(3-2*t)  (smoothstep)
+        const float RawT = FMath::Clamp(AnimElapsed / AnimDuration, 0.0f, 1.0f);
+        const float T    = RawT * RawT * (3.0f - 2.0f * RawT);
+
+        // Interpolate longitude with anti-meridian awareness
+        double DLon = AnimTargetLongitude - ViewLongitude;
+        if      (DLon >  180.0) DLon -= 360.0;
+        else if (DLon < -180.0) DLon += 360.0;
+
+        ViewLatitude   = FMath::Lerp(ViewLatitude,   AnimTargetLatitude,                    static_cast<double>(DeltaTime) * 4.0 * (1.0 - static_cast<double>(T) + 0.05));
+        ViewLongitude  = WrapLon(ViewLongitude + DLon * static_cast<double>(DeltaTime) * 4.0 * (1.0 - static_cast<double>(T) + 0.05));
+        CurrentArmLength = FMath::Lerp(CurrentArmLength, AnimTargetArmLength, DeltaTime * 4.0f * (1.0f - T + 0.05f));
+
+        if (AnimElapsed >= AnimDuration)
+        {
+            // Snap to exact target when done
+            ViewLatitude     = AnimTargetLatitude;
+            ViewLongitude    = AnimTargetLongitude;
+            CurrentArmLength = AnimTargetArmLength;
+            bCameraAnimating = false;
+        }
+    }
+
     if (bIsDragging)
+    {
+        // Any drag input cancels the fly-to
+        bCameraAnimating = false;
         ApplyDragPan();
+    }
 
     ApplyCameraToGlobe();
 }
@@ -394,7 +425,8 @@ void ARGGlobePawn::MoveRight(float Value)
 
 void ARGGlobePawn::FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate Actual, float DistanceKm)
 {
-    ViewLatitude = FMath::Clamp(
+    // Compute midpoint between the two locations (with anti-meridian handling)
+    const double TargetLat = FMath::Clamp(
         (Guess.Latitude + Actual.Latitude) * 0.5,
         -static_cast<double>(MaxAbsLatitude),
         static_cast<double>(MaxAbsLatitude));
@@ -403,8 +435,24 @@ void ARGGlobePawn::FocusOnGuessResult(FRGGeoCoordinate Guess, FRGGeoCoordinate A
     const double DLon = LonB - LonA;
     if      (DLon >  180.0) LonB -= 360.0;
     else if (DLon < -180.0) LonB += 360.0;
-    ViewLongitude = WrapLon((LonA + LonB) * 0.5);
+    const double TargetLon = WrapLon((LonA + LonB) * 0.5);
 
-    const float HeightKm = FMath::Clamp(FMath::Max(DistanceKm * 2.0f, 400.0f), 400.0f, 20000.0f);
-    CurrentArmLength = FMath::Clamp(HeightKm * 100000.0f, MinArmLength, MaxArmLength);
+    // Height: zoom out enough to show both markers, with a nice margin
+    const float HeightKm     = FMath::Clamp(FMath::Max(DistanceKm * 2.5f, 500.0f), 500.0f, 18000.0f);
+    const float TargetArm    = FMath::Clamp(HeightKm * 100000.0f, MinArmLength, MaxArmLength);
+
+    // Start smooth animated fly-to
+    AnimTargetLatitude  = TargetLat;
+    AnimTargetLongitude = TargetLon;
+    AnimTargetArmLength = TargetArm;
+    AnimElapsed         = 0.0f;
+
+    // Duration scales with angular distance — longer for antipodal, shorter for nearby
+    const double AngularDist = static_cast<double>(DistanceKm) / 111.0; // rough degrees
+    AnimDuration = FMath::Clamp(static_cast<float>(AngularDist * 0.08), 1.5f, 4.0f);
+
+    bCameraAnimating = true;
+
+    UE_LOG(LogTemp, Log, TEXT("FocusOnGuessResult: fly to lat=%.2f lon=%.2f alt=%.0fkm dur=%.1fs"),
+        TargetLat, TargetLon, HeightKm, AnimDuration);
 }

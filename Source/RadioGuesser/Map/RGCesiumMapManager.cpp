@@ -5,6 +5,7 @@
 #include "Map/RGMapSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "CesiumCreditSystem.h"
 #include "Components/Widget.h"
@@ -29,6 +30,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Player/RGGlobePawn.h"
 #include "Camera/PlayerCameraManager.h"
+#include "CesiumWgs84Ellipsoid.h"
 
 // MapTiler API key — shared key used for both terrain and map tiles.
 // Free tier: 100 000 tiles/month — plenty for development.
@@ -61,6 +63,14 @@ ARGCesiumMapManager::ARGCesiumMapManager()
     ActualLocationMarkerMesh->SetupAttachment(Root);
     ActualLocationMarkerMesh->SetVisibility(false);
     ActualLocationMarkerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    ResultArcMesh = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ResultArc"));
+    ResultArcMesh->SetupAttachment(Root);
+    ResultArcMesh->SetVisibility(false);
+    ResultArcMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ResultArcMesh->SetCastShadow(false);
+    // Distance culling: arc segments are tiny, no need to render from very far away
+    ResultArcMesh->SetCullDistances(0, 0); // never cull — always visible
 }
 
 void ARGCesiumMapManager::BeginPlay()
@@ -162,6 +172,12 @@ void ARGCesiumMapManager::Tick(float DeltaTime)
         UpdateMarkerScales();
     }
 
+    // Keep the arc segments positioned correctly as Cesium rebases the origin.
+    if (bGuessMarkerOn && bActualMarkerOn)
+    {
+        UpdateResultArc();
+    }
+
     // Cesium's CreditSystem re-adds its widget every tick.
     // We collapse it every tick to counteract that.
     if (ACesiumCreditSystem* Credits = ACesiumCreditSystem::GetDefaultCreditSystem(this))
@@ -257,6 +273,9 @@ void ARGCesiumMapManager::ShowRoundResult(FRGGeoCoordinate GuessCoord, FRGGeoCoo
             Globe->FocusOnGuessResult(GuessCoord, ActualCoord, DistKm);
         }
     }
+
+    // Build the arc immediately (Tick will keep it updated each frame)
+    UpdateResultArc();
 }
 
 void ARGCesiumMapManager::ClearRoundOverlays()
@@ -265,6 +284,11 @@ void ARGCesiumMapManager::ClearRoundOverlays()
     bActualMarkerOn = false;
     if (GuessMarkerMesh)          GuessMarkerMesh->SetVisibility(false);
     if (ActualLocationMarkerMesh) ActualLocationMarkerMesh->SetVisibility(false);
+    if (ResultArcMesh)
+    {
+        ResultArcMesh->ClearInstances();
+        ResultArcMesh->SetVisibility(false);
+    }
 }
 
 // ─── MapSubsystem callbacks ───────────────────────────────────────────────────
@@ -379,6 +403,147 @@ void ARGCesiumMapManager::EnsureMarkerMeshes()
     // Both same base scale 15000. Actual is same size as guess for fairness.
     SetupMarker(GuessMarkerMesh,          FLinearColor(1.0f, 0.85f, 0.05f), 15000.0f);
     SetupMarker(ActualLocationMarkerMesh, FLinearColor(1.0f, 0.10f, 0.05f), 15000.0f);
+}
+
+// ─── Result arc ───────────────────────────────────────────────────────────────
+
+void ARGCesiumMapManager::UpdateResultArc()
+{
+    if (!ResultArcMesh || !CesiumGeoreference) return;
+
+    ResultArcMesh->ClearInstances();
+
+    if (!bGuessMarkerOn || !bActualMarkerOn) return;
+
+    // ── Prepare sphere mesh and material ────────────────────────────────────
+    if (!ResultArcMesh->GetStaticMesh())
+    {
+        UStaticMesh* Sphere = LoadObject<UStaticMesh>(
+            nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+        if (Sphere) ResultArcMesh->SetStaticMesh(Sphere);
+    }
+
+    // Arc colour: bright orange-white gradient via EmissiveMeshMaterial
+    if (ResultArcMesh->GetNumMaterials() == 0 || !ResultArcMesh->GetMaterial(0))
+    {
+        if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(
+                nullptr, TEXT("/Engine/EngineMaterials/EmissiveMeshMaterial.EmissiveMeshMaterial")))
+        {
+            UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this);
+            if (MID)
+            {
+                MID->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor(5.0f, 2.0f, 0.5f));
+                MID->SetVectorParameterValue(TEXT("Color"),         FLinearColor(5.0f, 2.0f, 0.5f));
+                ResultArcMesh->SetMaterial(0, MID);
+            }
+        }
+    }
+
+    ResultArcMesh->SetVisibility(true);
+
+    // ── Convert endpoints to ECEF unit vectors ───────────────────────────────
+    // We work in ECEF (Earth-centred Earth-fixed) metres for the slerp.
+    const FVector LLH_A(LastGuessCoord.Longitude,  LastGuessCoord.Latitude,  0.0);
+    const FVector LLH_B(LastActualCoord.Longitude, LastActualCoord.Latitude, 0.0);
+
+    // Get ECEF in metres (CesiumGeoreference works in cm, divide by 100)
+    const FVector EcefA_cm = CesiumGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(LLH_A);
+    const FVector EcefB_cm = CesiumGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(LLH_B);
+
+    // We don't need true ECEF for slerp — we can slerp in Unreal world space
+    // using the globe-surface positions (at height 0). The arc height is added
+    // separately as a radial offset along the local surface normal at each point.
+
+    // Earth radius in cm (approximate, good enough for arc shape)
+    const float EarthRadiusCm = 637813700.0f; // 6378 km in cm
+
+    // Unit vectors from Earth centre toward each endpoint surface point.
+    // Since Cesium rebases the origin, we can't simply normalise the Unreal
+    // positions. Instead we go via the Georeference's LLH → ECEF conversion.
+    auto LLHtoECEF = [](const FRGGeoCoordinate& C) -> FVector
+    {
+        // UCesiumWgs84Ellipsoid returns ECEF in metres
+        const FVector LLH(C.Longitude, C.Latitude, 0.0);
+        return UCesiumWgs84Ellipsoid::LongitudeLatitudeHeightToEarthCenteredEarthFixed(LLH);
+    };
+
+    const FVector EcefA = LLHtoECEF(LastGuessCoord);
+    const FVector EcefB = LLHtoECEF(LastActualCoord);
+
+    const FVector UnitA = EcefA.GetSafeNormal();
+    const FVector UnitB = EcefB.GetSafeNormal();
+
+    const float CosAngle = FMath::Clamp(FVector::DotProduct(UnitA, UnitB), -1.0f, 1.0f);
+    const float Angle    = FMath::Acos(CosAngle); // radians
+
+    // Distance in km for arc-height scaling
+    const float DistKm = URGMapSubsystem::HaversineDistanceKm(LastGuessCoord, LastActualCoord);
+
+    // Arc peak height above surface: 15% of distance, clamped to [200 km, 4000 km]
+    const float ArcHeightKm = FMath::Clamp(DistKm * 0.15f, 200.0f, 4000.0f);
+    // In Cesium units (cm): 1 km = 100 000 cm
+    const float ArcHeightCm = ArcHeightKm * 100000.0f;
+
+    // Number of beads — more = smoother, but costlier. 80 is a good balance.
+    constexpr int32 NumBeads = 80;
+    // Skip endpoints (the markers already mark them)
+    constexpr int32 SkipEnd  = 2;
+
+    for (int32 i = SkipEnd; i <= NumBeads - SkipEnd; ++i)
+    {
+        const float T = static_cast<float>(i) / static_cast<float>(NumBeads);
+
+        // ── Slerp on the unit sphere ──────────────────────────────────────
+        FVector UnitP;
+        if (Angle < SMALL_NUMBER)
+        {
+            UnitP = UnitA; // degenerate — same point
+        }
+        else
+        {
+            // Standard slerp
+            const float SinAngle = FMath::Sin(Angle);
+            UnitP = (UnitA * FMath::Sin((1.0f - T) * Angle)
+                   + UnitB * FMath::Sin(T * Angle)) / SinAngle;
+            UnitP.Normalize();
+        }
+
+        // ── Radial offset: parabolic arch above surface ───────────────────
+        // sin(π*t) peaks at T=0.5, giving a smooth arch
+        const float ArchFactor  = FMath::Sin(PI * T);
+        const float HeightMetres = (ArcHeightCm + MarkerHeightOffset) * ArchFactor * 0.01f; // cm→m
+
+        // ECEF position with arch offset (metres)
+        const float EarthRadM  = EarthRadiusCm * 0.01f; // cm → m
+        const FVector EcefP_m  = UnitP * (EarthRadM + HeightMetres);
+
+        // Convert ECEF metres → LLH → Unreal world cm via public WGS84 API
+        const FVector LLH_P = UCesiumWgs84Ellipsoid::EarthCenteredEarthFixedToLongitudeLatitudeHeight(
+            EcefP_m);
+
+        const FVector WorldP = CesiumGeoreference->TransformLongitudeLatitudeHeightPositionToUnreal(
+            LLH_P); // returns Unreal world cm
+
+        // ── Scale bead: vary slightly with arch for visual depth ──────────
+        // Bigger at peak, slightly smaller at ends
+        const float BeadScale = FMath::Lerp(8000.0f, 12000.0f, ArchFactor);
+
+        FTransform InstanceTransform;
+        InstanceTransform.SetLocation(WorldP);
+        InstanceTransform.SetScale3D(FVector(BeadScale));
+        // Orient bead so it points radially away from globe
+        if (CesiumGeoreference)
+        {
+            const FRotator UpRot = CesiumGeoreference->TransformEastSouthUpRotatorToUnreal(
+                FRotator::ZeroRotator, WorldP);
+            InstanceTransform.SetRotation(FQuat(UpRot));
+        }
+
+        ResultArcMesh->AddInstance(InstanceTransform, /*bWorldSpace=*/true);
+    }
+
+    UE_LOG(LogMap, Log, TEXT("UpdateResultArc: %d beads, dist=%.0fkm, peak=%.0fkm"),
+        NumBeads - 2 * SkipEnd, DistKm, ArcHeightKm);
 }
 
 void ARGCesiumMapManager::ConfigureGlobeLighting()
